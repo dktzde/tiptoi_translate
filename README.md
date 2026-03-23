@@ -108,6 +108,44 @@ nohup bash ~/tiptoi-translate/monitor.sh > /dev/null 2>&1 &
 Die fertige Datei liegt danach in `06_output/buch_fr.gme`.
 Resume funktioniert automatisch – einfach denselben Befehl erneut ausführen.
 
+### Alle Parameter
+
+```bash
+python pipeline.py 01_input/buch.gme [OPTIONEN]
+
+  --language SPRACHE      Zielsprache: fr (Französisch) oder ch (Schweizerdeutsch)
+                          Standard: fr
+
+  --voice STIMME          edge-tts Stimme (überschreibt Sprachstandard)
+
+  --whisper-model MODELL  Whisper-Modell: tiny, base, small, medium, large-v3-turbo
+                          Standard: small
+
+  --limit N               Nur die ersten N Audiodateien verarbeiten
+                          (0 = alle, nützlich für Testläufe)
+```
+
+---
+
+## Nach dem Lauf
+
+```bash
+# Sprache in der GME setzen (nötig für Tiptoi-Stift):
+~/.local/bin/tttool set-language FRENCH 06_output/buch_fr.gme
+```
+
+Resume: Einfach denselben Befehl nochmal ausführen – bereits vorhandene
+Transkripte, Übersetzungen und MP3s werden übersprungen.
+
+---
+
+## Direkter Python-Aufruf
+
+```bash
+source .venv/bin/activate
+python pipeline.py 01_input/buch.gme --language fr
+```
+
 ---
 
 ## Stimmen
