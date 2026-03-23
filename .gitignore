@@ -1,5 +1,6 @@
 # ── Secrets ───────────────────────────────────────────────────────
 .env
+CLAUDE.md
 
 # ── Notebooks mit Tokens (backup enthält alle alten Versionen) ────
 backup/
