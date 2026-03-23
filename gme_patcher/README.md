@@ -9,8 +9,21 @@ Replaces audio files in Tiptoi `.gme` files using a direct binary patch –
 containing game logic and firmware data. After reassembly, interactive games
 (quizzes, puzzles) no longer work.
 
-**Confirmed by tttool author Joachim Breitner**: in-place audio replacement is
-the correct approach.
+```
+Unknown file segments: 8 (4526 bytes total)
+   Offset: 000000D0 to 00000200 (304 bytes)   ← presumed header extension
+   Offset: 0001066B to 000115F9 (3982 bytes)  ← presumed game logic
+   ...
+```
+
+**Confirmed by tttool author Joachim Breitner (mailing list, 2026-02-26):**
+
+> an sich sollte das gehen, zumindest wenn alle Audiodateien wirklich nur
+> über ihre Adresse in der Tabelle referenziert werden.
+>
+> Das in tttool einzubauen braucht vermutlich ein bisschen refactoring …
+> Hatte nicht jemand mal ein separates Tool dafür geschrieben?
+> https://github.com/entropia/tip-toi-reveng/blob/master/libtiptoi.c
 
 ## The Solution
 
@@ -75,7 +88,6 @@ Files without a replacement are kept from the original GME.
 gme_patcher/
   gme_patch.py          – The patcher (no external dependencies)
   CHANGELOG.md          – Version history
-  NOTES.md              – Background & motivation
   tip-toi-reveng/       – Reference implementation & format docs (offline copy)
     GME-Format.md       – Complete format documentation
     libtiptoi.c         – C reference (Michael Wolf, MIT License)
