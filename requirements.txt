@@ -1,0 +1,7 @@
+faster-whisper
+mistralai
+edge-tts
+python-dotenv
+resemblyzer
+scikit-learn
+torch --index-url https://download.pytorch.org/whl/cpu

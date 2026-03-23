@@ -1,0 +1,10 @@
+# GME-Binärdateien
+*.gme
+*.gmex
+
+# Übertragene Dateien und Archivordner
+uebertragen_*/
+temp/
+
+# Interne Claude-Notizen
+CLAUDE.md

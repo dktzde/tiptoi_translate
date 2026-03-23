@@ -1,0 +1,41 @@
+# ── Secrets ───────────────────────────────────────────────────────
+.env
+
+# ── Notebooks mit Tokens (backup enthält alle alten Versionen) ────
+backup/
+
+# ── Große Dateiordner (kein Code, kein Backup) ────────────────────
+01_input/
+02_unpacked/
+02_upload/
+03_transcripts/
+04_translated/
+05_tts_output/
+07_colab_upload/
+
+# ── GME-Binärdateien und übertragene Dateien ──────────────────────
+06_output/*.gme
+06_output/*.gmex
+06_output/uebertragen_*/
+06_output/temp/
+
+# ── Testdaten ─────────────────────────────────────────────────────
+model_test/WWW_Unser_Wald/
+gme_patcher/test_ogg_feuerwehr_ch/
+gme_patcher/tip-toi-reveng/
+
+# ── Python ────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# ── Shell-Skripte ─────────────────────────────────────────────────
+*.sh
+!06_output/*.sh
+
+# ── Logs und temporäre Dateien ────────────────────────────────────
+*.log
+ram_usage.csv
+.claude/
+colab_pipeline_v*.ipynb

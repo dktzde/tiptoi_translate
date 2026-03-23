@@ -1,0 +1,9 @@
+# Test OGG directories
+test_ogg_*/
+
+# Temporary patch outputs
+*.gme
+
+# Python cache
+__pycache__/
+*.pyc
