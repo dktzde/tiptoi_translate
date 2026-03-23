@@ -34,6 +34,7 @@ __pycache__/
 # ── Shell-Skripte ─────────────────────────────────────────────────
 *.sh
 !06_output/*.sh
+!colab_sync.sh
 
 # ── Logs und temporäre Dateien ────────────────────────────────────
 *.log
