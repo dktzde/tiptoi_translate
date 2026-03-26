@@ -435,6 +435,26 @@ def transcribe_one(ogg_file: Path, model: WhisperModel, transcript_file: Path) -
     return text
 
 
+# ─── Mistral Response Parsing ─────────────────────────────────────────────────
+
+def _extract_text(content) -> str:
+    """Extrahiert Text aus Mistral-Antwort. Magistral (Reasoning) gibt content
+    als Liste von Blöcken zurück (Objekte mit .type/.text), Standard-Modelle als String."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            btype = getattr(block, "type", None) or (block.get("type") if isinstance(block, dict) else None)
+            if btype == "thinking":
+                continue
+            text = getattr(block, "text", None) or (block.get("text", "") if isinstance(block, dict) else "")
+            if text:
+                parts.append(text)
+        return "".join(parts)
+    return str(content)
+
+
 # ─── Pro-Datei: Übersetzung ───────────────────────────────────────────────────
 
 def translate_one(text: str, client: Mistral, translation_file: Path, system_prompt: str, model: str, temperature: float | None = None) -> str:
@@ -459,7 +479,7 @@ def translate_one(text: str, client: Mistral, translation_file: Path, system_pro
     for attempt in range(len(waits) + 1):
         try:
             resp = client.chat.complete(**kwargs)
-            translated = resp.choices[0].message.content.strip()
+            translated = _extract_text(resp.choices[0].message.content).strip()
             translation_file.write_text(translated, encoding="utf-8")
             return translated
         except Exception as e:
@@ -520,7 +540,7 @@ def translate_batch(
         for attempt in range(len(waits) + 1):
             try:
                 resp   = client.chat.complete(**kwargs)
-                result = resp.choices[0].message.content
+                result = _extract_text(resp.choices[0].message.content)
                 break
             except Exception as e:
                 if ("429" in str(e) or "rate" in str(e).lower()) and attempt < len(waits):
