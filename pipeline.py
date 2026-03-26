@@ -81,7 +81,7 @@ LANG_CONFIG = {
             "fr-BE-GerardNeural",                  # 6 – m, belgisch
             "fr-CH-FabriceNeural",                 # 7 – m, Schweizer FR
         ],
-        "model": "mistral-medium-latest",
+        "model": "magistral-medium-latest",
         "temperature": 0.8,
         "suffix": "_fr",
         "label": "FR",
@@ -102,7 +102,7 @@ LANG_CONFIG = {
             "de-DE-ConradNeural",                  # 6 – m, Hochdeutsch
             "de-DE-KatjaNeural",                   # 7 – f, Hochdeutsch
         ],
-        "model": "mistral-medium-latest",
+        "model": "magistral-medium-latest",
         "temperature": 0.3,
         "suffix": "_ch",
         "label": "CH",
