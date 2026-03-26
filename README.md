@@ -1,8 +1,9 @@
-# Tiptoi DE → FR / CH Übersetzer
+# Tiptoi DE → FR / CH / VO / BY / ND Übersetzer
 
-Übersetzt Tiptoi-Bücher (Ravensburger) automatisch von Deutsch nach
-**Französisch** oder **Schweizerdeutsch**. Nimmt eine GME-Datei, tauscht
-alle Audiodateien aus und erzeugt eine neue abspielbare GME-Datei.
+Übersetzt Tiptoi-Bücher (Ravensburger) automatisch von Deutsch in
+**5 Zielsprachen**: Französisch, Schweizerdeutsch, Vogtländisch, Bairisch
+und Plattdeutsch. Nimmt eine GME-Datei, tauscht alle Audiodateien aus
+und erzeugt eine neue abspielbare GME-Datei.
 
 ---
 
@@ -35,10 +36,10 @@ Lokaler PC:  TXTs entpacken → Übersetzen → TTS → GME packen
 |---------|-------------|------|
 | 1 | GME entpacken (YAML + OGG) | `tttool export` / `tttool media` |
 | 2 | Transkription DE | faster-whisper (`small` lokal / `large-v3-turbo` Colab) |
-| 3 | Übersetzung DE → Zielsprache | Mistral API |
+| 3 | Übersetzung DE → Zielsprache | Mistral API (`magistral-medium-latest`) |
 | 4 | TTS | edge-tts |
 | 5 | OGG-Konvertierung | ffmpeg (Mono, 22050 Hz) |
-| 6 | GME neu packen | `tttool assemble` |
+| 6 | GME neu packen | `tttool assemble` oder `gme_patch.py` (Binary-Patch) |
 
 ---
 
@@ -81,6 +82,18 @@ nano .env   # MISTRAL_API_KEY=dein_key_hier
 # Schweizerdeutsch
 ./tiptoi.sh 01_input/buch.gme --language ch
 
+# Bairisch
+./tiptoi.sh 01_input/buch.gme --language by
+
+# Vogtländisch
+./tiptoi.sh 01_input/buch.gme --language vo
+
+# Plattdeutsch
+./tiptoi.sh 01_input/buch.gme --language nd
+
+# Binary-Patch (erhält Spiele-Logik, ALPHA):
+./tiptoi.sh 01_input/buch.gme --use-patcher
+
 # Nur ersten 10 Dateien (Testlauf)
 ./tiptoi.sh 01_input/buch.gme --limit 10
 
@@ -88,7 +101,7 @@ nano .env   # MISTRAL_API_KEY=dein_key_hier
 ./tiptoi.sh 01_input/buch.gme --whisper-model medium
 ```
 
-Die fertige Datei liegt danach in `06_output/buch_fr.gme`.
+Die fertige Datei liegt danach in `06_output/buch_fr.gme` (bzw. `_ch`, `_vo`, `_by`, `_nd`).
 Resume funktioniert automatisch – einfach denselben Befehl erneut ausführen.
 
 ### Alle Parameter
@@ -96,7 +109,7 @@ Resume funktioniert automatisch – einfach denselben Befehl erneut ausführen.
 ```bash
 python pipeline.py 01_input/buch.gme [OPTIONEN]
 
-  --language SPRACHE      Zielsprache: fr (Französisch) oder ch (Schweizerdeutsch)
+  --language SPRACHE      Zielsprache: fr, ch, vo, by, nd
                           Standard: fr
 
   --voice STIMME          edge-tts Stimme (überschreibt Sprachstandard)
@@ -106,16 +119,20 @@ python pipeline.py 01_input/buch.gme [OPTIONEN]
 
   --limit N               Nur die ersten N Audiodateien verarbeiten
                           (0 = alle, nützlich für Testläufe)
+
+  --use-patcher           [ALPHA] Schritt 6 via gme_patch.py statt tttool assemble
+                          (erhält Spiele-Logik per Binary-Patch)
+
+  --skip-assemble         Schritt 6 überspringen (OGGs bleiben für manuellen Patch)
+
+  --offline               Alles lokal ausführen (kein Colab-Pause)
+
+  --min-k N               Mindestanzahl Sprecher-Cluster (Standard: 2)
 ```
 
 ---
 
 ## Nach dem Lauf
-
-```bash
-# Sprache in der GME setzen (nötig für Tiptoi-Stift):
-~/.local/bin/tttool set-language FRENCH 06_output/buch_fr.gme
-```
 
 Resume: Einfach denselben Befehl nochmal ausführen – bereits vorhandene
 Transkripte, Übersetzungen und MP3s werden übersprungen.
@@ -131,28 +148,79 @@ python pipeline.py 01_input/buch.gme --language fr
 
 ---
 
-## Stimmen
+## Stimmen (8 pro Sprache)
+
+Jede Sprache hat 8 edge-tts-Stimmen (4m/4f). Sprecher werden automatisch
+via **resemblyzer** (GE2E Embeddings) erkannt und den Stimmen zugeordnet.
+Das Ergebnis wird als `speakers.json` pro Buch gespeichert und bei weiteren
+Sprachen wiederverwendet.
+
+Übersetzung erfolgt via **Magistral** (`magistral-medium-latest`, Reasoning-Modell).
 
 **Französisch (`--language fr`)**
 
-| Stimme | Typ |
-|--------|-----|
-| `fr-FR-HenriNeural` | Männlich, tief (Erzähler) |
-| `fr-FR-VivienneMultilingualNeural` | Weiblich, natürlich |
-| `fr-FR-RemyMultilingualNeural` | Männlich, natürlich |
-| `fr-FR-EloiseNeural` | Weiblich, Kinderstimme |
+| # | Stimme | Typ |
+|---|--------|-----|
+| 0 | `fr-FR-HenriNeural` | m, tiefer Erzähler |
+| 1 | `fr-FR-EloiseNeural` | f, Kinderstimme |
+| 2 | `fr-BE-CharlineNeural` | f, belgisch (Kind 2) |
+| 3 | `fr-FR-RemyMultilingualNeural` | m, natürlich |
+| 4 | `fr-FR-VivienneMultilingualNeural` | f, Erzählerin |
+| 5 | `fr-FR-DeniseNeural` | f, warm/reif |
+| 6 | `fr-BE-GerardNeural` | m, belgisch |
+| 7 | `fr-CH-FabriceNeural` | m, Schweizer FR |
 
 **Schweizerdeutsch (`--language ch`)**
 
-| Stimme | Typ |
-|--------|-----|
-| `de-CH-JanNeural` | Männlich |
-| `de-CH-LeniNeural` | Weiblich |
-| `de-AT-JonasNeural` | Männlich, Österreichisch |
+| # | Stimme | Typ |
+|---|--------|-----|
+| 0 | `de-CH-JanNeural` | m, Schweizerdeutsch |
+| 1 | `de-CH-LeniNeural` | f, Schweizerdeutsch |
+| 2 | `de-AT-JonasNeural` | m, Österreichisch |
+| 3 | `de-AT-IngridNeural` | f, Österreichisch |
+| 4 | `de-DE-FlorianMultilingualNeural` | m, multilingual |
+| 5 | `de-DE-SeraphinaMultilingualNeural` | f, multilingual |
+| 6 | `de-DE-ConradNeural` | m, Hochdeutsch |
+| 7 | `de-DE-KatjaNeural` | f, Hochdeutsch |
 
-Sprecher werden automatisch via **resemblyzer** (GE2E Embeddings) erkannt
-und den Stimmen zugeordnet. Das Ergebnis wird als `speakers.json` pro Buch
-gespeichert und bei weiteren Sprachen wiederverwendet.
+**Vogtländisch (`--language vo`)**
+
+| # | Stimme | Typ |
+|---|--------|-----|
+| 0 | `de-DE-FlorianMultilingualNeural` | m, multilingual |
+| 1 | `de-DE-SeraphinaMultilingualNeural` | f, multilingual |
+| 2 | `de-DE-ConradNeural` | m |
+| 3 | `de-DE-KatjaNeural` | f |
+| 4 | `de-DE-KillianNeural` | m |
+| 5 | `de-DE-AmalaNeural` | f |
+| 6 | `de-CH-JanNeural` | m |
+| 7 | `de-AT-IngridNeural` | f |
+
+**Bairisch (`--language by`)**
+
+| # | Stimme | Typ |
+|---|--------|-----|
+| 0 | `de-AT-JonasNeural` | m, Österreichisch |
+| 1 | `de-AT-IngridNeural` | f, Österreichisch |
+| 2 | `de-DE-FlorianMultilingualNeural` | m, multilingual |
+| 3 | `de-DE-SeraphinaMultilingualNeural` | f, multilingual |
+| 4 | `de-CH-JanNeural` | m |
+| 5 | `de-CH-LeniNeural` | f |
+| 6 | `de-DE-ConradNeural` | m |
+| 7 | `de-DE-KatjaNeural` | f |
+
+**Plattdeutsch (`--language nd`)**
+
+| # | Stimme | Typ |
+|---|--------|-----|
+| 0 | `de-DE-FlorianMultilingualNeural` | m, multilingual |
+| 1 | `de-DE-SeraphinaMultilingualNeural` | f, multilingual |
+| 2 | `de-DE-KillianNeural` | m |
+| 3 | `de-DE-KatjaNeural` | f |
+| 4 | `de-DE-ConradNeural` | m |
+| 5 | `de-DE-AmalaNeural` | f |
+| 6 | `de-AT-JonasNeural` | m |
+| 7 | `de-CH-LeniNeural` | f |
 
 ---
 
@@ -164,7 +232,7 @@ gespeichert und bei weiteren Sprachen wiederverwendet.
 03_transcripts/ Whisper-Transkripte (DE)
 04_translated/  Mistral-Übersetzungen
 05_tts_output/  edge-tts MP3-Dateien
-06_output/      Fertige *_fr.gme / *_ch.gme
+06_output/      Fertige *_fr / *_ch / *_vo / *_by / *_nd .gme
 backup/         Versionierte Skript-Backups
 ```
 
@@ -172,6 +240,7 @@ backup/         Versionierte Skript-Backups
 
 ## Stack
 
-- Python 3.13, faster-whisper, mistralai, edge-tts, resemblyzer, python-dotenv
+- Python 3.13, faster-whisper, mistralai (Magistral), edge-tts, resemblyzer, python-dotenv
 - tttool 1.11 (Haskell-Binary)
+- gme_patch.py v5 (Binary-Patch, erhält Spiele-Logik)
 - ffmpeg 7.1
