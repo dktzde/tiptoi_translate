@@ -8,8 +8,7 @@ alle Audiodateien aus und erzeugt eine neue abspielbare GME-Datei.
 
 ## Warum Google Colab für die Transkription?
 
-Der lokale Linux-PC hat eine **Intel Haswell-GPU (2013)** – zu alt für
-OpenVINO (min. Skylake 6th Gen erforderlich) und kein NVIDIA-Chip, also
+Mein PC hat leider keine GPU, also
 kein CUDA. Whisper läuft damit ausschließlich auf der CPU.
 
 Ein typisches Tiptoi-Buch hat **1.000–2.000 OGG-Dateien**. Mit dem
@@ -69,22 +68,6 @@ pip install -r requirements.txt
 # API Key
 cp .env.example .env
 nano .env   # MISTRAL_API_KEY=dein_key_hier
-```
-
----
-
-## Vor jedem Start prüfen
-
-```bash
-# Swap aktiv? (wird für große Bücher benötigt)
-swapon --show   # → muss /dev/sdb1 ~15 GB zeigen
-# Falls nicht:
-sudo swapon /dev/sdb1
-
-# RAM-Monitor läuft?
-pgrep -f monitor.sh
-# Falls nicht:
-nohup bash ~/tiptoi-translate/monitor.sh > /dev/null 2>&1 &
 ```
 
 ---
