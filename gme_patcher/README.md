@@ -103,9 +103,9 @@ When post-audio data exists (game binaries, single binaries, special symbols), t
 
 1. Performs all safe-mode steps (1–3).
 2. **Appends post-audio data** bit-for-bit after the new audio block.
-3. **Fixes only known header pointers** at positions `0x005C` (binaries table), `0x0064` (single binaries table), and `0x0068` (special symbols table). These three offsets are well-documented in the GME format specification.
-4. **Fixes binary table internals** — each binary table has a known structure (`count + count × offset`), so internal pointers are shifted by the same delta.
-5. **No blind scanning** — previous versions scanned every 4-byte position looking for values that "might be pointers." This corrupted script commands, timer values, and OID codes, causing loops and crashes. v4 eliminates this entirely.
+3. **Fixes all 11 known header pointers** that can reference post-audio data. Each pointer is shifted by the audio size delta. See [Post-Audio Pointer Coverage](#pointer-coverage-en) below.
+4. **Fixes binary table internals** — tables with `has_internals=True` contain sub-pointers (offsets to binary data within the post-audio region). These are scanned and shifted as well.
+5. **No blind scanning** — previous versions scanned every 4-byte position looking for values that "might be pointers." This corrupted script commands, timer values, and OID codes, causing loops and crashes. v5 only touches known, documented header offsets and their internal structures.
 
 #### XOR Encryption
 
@@ -247,7 +247,7 @@ else:
 | Decision | Rationale |
 |----------|-----------|
 | **No deduplication** | libtiptoi.c writes each table entry as its own audio copy. Deduplicating saves space but introduces risk if some firmware behavior depends on sequential layout. We follow the proven approach. |
-| **No blind pointer scanning** | v3 scanned every 4-byte position for values that looked like pointers. This corrupted non-pointer data (script commands, timer values, OID codes) and caused pen crashes. v4 only touches 3 known, documented header offsets. |
+| **No blind pointer scanning** | v3 scanned every 4-byte position for values that looked like pointers. This corrupted non-pointer data (script commands, timer values, OID codes) and caused pen crashes. v5 only touches 11 known, documented header offsets and their internal table structures. |
 | **Two explicit modes** | Rather than silently attempting experimental patches, the tool clearly separates safe (proven) from experimental (best-effort) and marks output files accordingly. |
 | **tttool-compatible CLI** | Using the same command names (`media`, `assemble`, `info`) makes it a drop-in replacement in existing scripts. Only `assemble` differs semantically (binary patch vs. YAML round-trip). |
 | **No external dependencies** | The patcher uses only Python stdlib, making it easy to install and use on any system with Python 3.10+. |
@@ -268,10 +268,44 @@ Brief overview of the Tiptoi GME format (see [GME-Format.md](https://github.com/
 | `0x0060` | Additional audio table offset |
 | `0x0064` | Single binaries table offset |
 | `0x0068` | Special symbols table offset |
+| `0x008C` | Media flags offset |
+| `0x0090` | Game binaries 2 table offset |
+| `0x0094` | Special OID list offset |
+| `0x0098` | Game binaries 3 table offset |
+| `0x00A0` | Single binary 1 offset |
+| `0x00A8` | Single binary 2 offset |
+| `0x00C8` | Single binary 3 offset |
+| `0x00CC` | Binaries table 4 offset |
 
 Audio table entries: `N × (offset: uint32, length: uint32)`, where `N = (first_audio_offset - table_offset) / 8`.
 
 Checksum: last 4 bytes of file, additive sum of all preceding bytes (little-endian uint32).
+
+<a id="pointer-coverage-en"></a>
+
+#### Post-Audio Pointer Coverage (v5)
+
+All header offsets that can point into the post-audio region. v5 handles all of them:
+
+| Offset | Name | Type | v5 Coverage |
+|--------|------|------|-------------|
+| `0x0004` | Audio Table | Audio table | Always rebuilt |
+| `0x0060` | Additional Audio Table | Audio table | Always rebuilt |
+| `0x005C` | Binaries 1 | Table (count + entries) | Header + internals |
+| `0x0064` | Single-Binaries | Table (count + entries) | Header + internals |
+| `0x0068` | Special Symbols | Table (count + entries) | Header + internals |
+| `0x008C` | Media Flags | Direct pointer | Header only |
+| `0x0090` | Game Binaries 2 | Table (count + entries) | Header + internals |
+| `0x0094` | Special OID List | Direct pointer | Header only |
+| `0x0098` | Game Binaries 3 | Table (count + entries) | Header + internals |
+| `0x00A0` | Single Binary 1 | Direct pointer | Header only |
+| `0x00A8` | Single Binary 2 | Direct pointer | Header only |
+| `0x00C8` | Single Binary 3 | Direct pointer | Header only |
+| `0x00CC` | Binaries Table 4 | Table (count + entries) | Header + internals |
+
+**Type legend:**
+- **Table**: Header points to `count(uint32)` followed by entries containing offset/length/name fields. Internal offset fields are also shifted.
+- **Direct pointer**: Header points directly to data. Only the header pointer itself is shifted.
 
 ---
 
@@ -383,9 +417,9 @@ Wenn Post-Audio-Daten existieren (Spiele-Binaries, Single-Binaries, Special Symb
 
 1. Alle Safe-Modus-Schritte (1–3) durchführen.
 2. **Post-Audio-Daten bitgenau anhängen** nach dem neuen Audio-Block.
-3. **Nur bekannte Header-Pointer korrigieren** an den Positionen `0x005C` (Binaries-Tabelle), `0x0064` (Single-Binaries-Tabelle) und `0x0068` (Special-Symbols-Tabelle). Diese drei Offsets sind in der GME-Format-Spezifikation gut dokumentiert.
-4. **Binary-Table-Interna verschieben** — jede Binary-Tabelle hat ein bekanntes Format (`count + count × offset`), sodass interne Pointer um denselben Delta verschoben werden.
-5. **Kein Blind-Scan** — frühere Versionen scannten jede 4-Byte-Position auf Werte die „Pointer sein könnten". Das korrumpierte Script-Befehle, Timer-Werte und OID-Codes und verursachte Loops und Abstürze. v4 eliminiert dies vollständig.
+3. **Alle 11 bekannten Header-Pointer korrigieren**, die auf Post-Audio-Daten zeigen können. Jeder Pointer wird um das Audio-Größen-Delta verschoben. Siehe [Post-Audio Pointer-Abdeckung](#pointer-coverage-de) unten.
+4. **Binary-Table-Interna verschieben** — Tabellen mit `has_internals=True` enthalten Sub-Pointer (Offsets auf Binary-Daten im Post-Audio-Bereich). Diese werden gescannt und ebenfalls verschoben.
+5. **Kein Blind-Scan** — frühere Versionen scannten jede 4-Byte-Position auf Werte die „Pointer sein könnten". Das korrumpierte Script-Befehle, Timer-Werte und OID-Codes und verursachte Loops und Abstürze. v5 fasst nur bekannte, dokumentierte Header-Offsets und deren interne Strukturen an.
 
 #### XOR-Verschlüsselung
 
@@ -529,7 +563,7 @@ else:
 | Entscheidung | Begründung |
 |---|---|
 | **Kein Duplikate-Dedup** | libtiptoi.c schreibt jeden Tabellenindex als eigene Audio-Kopie. Deduplizierung spart Platz, birgt aber Risiken wenn Firmware-Verhalten von sequenziellem Layout abhängt. Wir folgen dem bewährten Ansatz. |
-| **Kein Blind-Scan** | v3 scannte alle 4-Byte-Positionen nach Werten die „Pointer sein könnten". Das korrumpierte Nicht-Pointer-Daten (Script-Befehle, Timer-Werte, OID-Codes) und verursachte Stift-Abstürze. v4 fasst nur 3 bekannte, dokumentierte Header-Offsets an. |
+| **Kein Blind-Scan** | v3 scannte alle 4-Byte-Positionen nach Werten die „Pointer sein könnten". Das korrumpierte Nicht-Pointer-Daten (Script-Befehle, Timer-Werte, OID-Codes) und verursachte Stift-Abstürze. v5 fasst nur 11 bekannte, dokumentierte Header-Offsets und deren interne Tabellenstrukturen an. |
 | **Zwei explizite Modi** | Statt still experimentelle Patches zu versuchen, trennt das Tool klar Safe (bewährt) von Experimentell (Best-Effort) und markiert Ausgabedateien entsprechend. |
 | **tttool-kompatible CLI** | Gleiche Befehlsnamen (`media`, `assemble`, `info`) → Drop-in-Ersatz in bestehenden Scripts. Nur `assemble` weicht semantisch ab (Binary-Patch statt YAML-Roundtrip). |
 | **Keine externen Abhängigkeiten** | Nur Python-Stdlib → keine Installation nötig, läuft überall mit Python 3.10+. |
@@ -550,10 +584,44 @@ Kurzübersicht des Tiptoi-GME-Formats (vollständige Dokumentation: [GME-Format.
 | `0x0060` | Zusatz-Audio-Tabellen-Offset |
 | `0x0064` | Single-Binaries-Tabellen-Offset |
 | `0x0068` | Special-Symbols-Tabellen-Offset |
+| `0x008C` | Media-Flags-Offset |
+| `0x0090` | Game-Binaries-2-Tabellen-Offset |
+| `0x0094` | Special-OID-List-Offset |
+| `0x0098` | Game-Binaries-3-Tabellen-Offset |
+| `0x00A0` | Single-Binary-1-Offset |
+| `0x00A8` | Single-Binary-2-Offset |
+| `0x00C8` | Single-Binary-3-Offset |
+| `0x00CC` | Binaries-Tabelle-4-Offset |
 
 Audio-Tabelleneinträge: `N × (Offset: uint32, Länge: uint32)`, wobei `N = (erster_Audio_Offset - Tabellen_Offset) / 8`.
 
 Prüfsumme: letzte 4 Bytes der Datei, additive Summe aller vorherigen Bytes (Little-Endian uint32).
+
+<a id="pointer-coverage-de"></a>
+
+#### Post-Audio Pointer-Abdeckung (v5)
+
+Alle Header-Offsets die auf Post-Audio-Daten zeigen können. v5 behandelt alle:
+
+| Offset | Name | Typ | v5-Abdeckung |
+|--------|------|-----|--------------|
+| `0x0004` | Audio-Tabelle | Audio-Tabelle | Immer neu gebaut |
+| `0x0060` | Zusatz-Audio-Tabelle | Audio-Tabelle | Immer neu gebaut |
+| `0x005C` | Binaries 1 | Tabelle (count + Einträge) | Header + Interna |
+| `0x0064` | Single-Binaries | Tabelle (count + Einträge) | Header + Interna |
+| `0x0068` | Special Symbols | Tabelle (count + Einträge) | Header + Interna |
+| `0x008C` | Media Flags | Direkt-Pointer | Nur Header |
+| `0x0090` | Game Binaries 2 | Tabelle (count + Einträge) | Header + Interna |
+| `0x0094` | Special OID List | Direkt-Pointer | Nur Header |
+| `0x0098` | Game Binaries 3 | Tabelle (count + Einträge) | Header + Interna |
+| `0x00A0` | Single Binary 1 | Direkt-Pointer | Nur Header |
+| `0x00A8` | Single Binary 2 | Direkt-Pointer | Nur Header |
+| `0x00C8` | Single Binary 3 | Direkt-Pointer | Nur Header |
+| `0x00CC` | Binaries Table 4 | Tabelle (count + Einträge) | Header + Interna |
+
+**Typ-Legende:**
+- **Tabelle**: Header zeigt auf `count(uint32)` gefolgt von Einträgen mit Offset/Länge/Name-Feldern. Interne Offset-Felder werden ebenfalls verschoben.
+- **Direkt-Pointer**: Header zeigt direkt auf Daten. Nur der Header-Pointer selbst wird verschoben.
 
 ---
 
@@ -623,7 +691,7 @@ Construction identique à `libtiptoi.c` : Header → Table → Audio → Checksu
 
 **Mode expérimental** (quand des données post-audio comme les binaires de jeu existent) :
 
-Confirmation interactive avant le patch (ou `--force`). Les données post-audio sont ajoutées bit à bit, seuls 3 pointeurs d'en-tête connus sont corrigés. Pas de scan aveugle. Le fichier de sortie reçoit le suffixe `_experimentell`.
+Confirmation interactive avant le patch (ou `--force`). Les données post-audio sont ajoutées bit à bit, les 11 pointeurs d'en-tête connus sont corrigés (ainsi que les structures internes des tables). Pas de scan aveugle. Le fichier de sortie reçoit le suffixe `_experimentell`.
 
 ---
 
@@ -643,9 +711,9 @@ Pas de déduplication : chaque index de table reçoit sa propre copie audio (com
 En plus des étapes du mode sûr :
 
 1. **Ajouter les données post-audio** bit à bit après le nouveau bloc audio.
-2. **Corriger uniquement les pointeurs d'en-tête connus** aux positions `0x005C` (table de binaires), `0x0064` (table de binaires individuels) et `0x0068` (table de symboles spéciaux).
-3. **Corriger les structures internes des tables binaires** — chaque table a un format connu (`count + count × offset`).
-4. **Pas de scan aveugle** — les versions précédentes scannaient chaque position de 4 octets, corrompant les commandes de script, valeurs de timer et codes OID → crashs. v4 élimine cela entièrement.
+2. **Corriger les 11 pointeurs d'en-tête connus** qui peuvent référencer des données post-audio. Voir [Couverture des pointeurs post-audio](#pointer-coverage-fr) ci-dessous.
+3. **Corriger les structures internes des tables binaires** — les tables avec `has_internals=True` contiennent des sous-pointeurs qui sont également décalés.
+4. **Pas de scan aveugle** — les versions précédentes scannaient chaque position de 4 octets, corrompant les commandes de script, valeurs de timer et codes OID → crashs. v5 ne touche que les offsets d'en-tête documentés et leurs structures internes.
 
 #### Chiffrement XOR
 
@@ -750,7 +818,7 @@ result = patch_gme(Path("entree.gme"), Path("tts_output/"), Path("sortie.gme"), 
 | Choix | Justification |
 |---|---|
 | **Pas de déduplication** | libtiptoi.c écrit chaque index comme copie séparée. Plus sûr, évite les risques liés aux références d'offset. |
-| **Pas de scan aveugle** | v3 scannait toutes les positions 4 octets → corrompait les scripts → crashs. v4 ne corrige que 3 offsets d'en-tête documentés. |
+| **Pas de scan aveugle** | v3 scannait toutes les positions 4 octets → corrompait les scripts → crashs. v5 ne corrige que 11 offsets d'en-tête documentés et leurs structures internes. |
 | **Deux modes explicites** | Séparation claire entre sûr (éprouvé) et expérimental (best-effort), avec marquage des fichiers de sortie. |
 | **CLI compatible tttool** | Mêmes noms de commandes (`media`, `assemble`, `info`) → remplacement direct dans les scripts existants. |
 | **Aucune dépendance** | Stdlib Python uniquement → fonctionne partout avec Python 3.10+. |
@@ -768,8 +836,38 @@ result = patch_gme(Path("entree.gme"), Path("tts_output/"), Path("sortie.gme"), 
 | `0x0060` | Offset table audio supplémentaire |
 | `0x0064` | Offset table binaires individuels |
 | `0x0068` | Offset table symboles spéciaux |
+| `0x008C` | Offset media flags |
+| `0x0090` | Offset table game binaries 2 |
+| `0x0094` | Offset liste OID spéciaux |
+| `0x0098` | Offset table game binaries 3 |
+| `0x00A0` | Offset single binary 1 |
+| `0x00A8` | Offset single binary 2 |
+| `0x00C8` | Offset single binary 3 |
+| `0x00CC` | Offset table binaires 4 |
 
 Documentation complète : [GME-Format.md](https://github.com/entropia/tip-toi-reveng/blob/master/GME-Format.md)
+
+<a id="pointer-coverage-fr"></a>
+
+#### Couverture des pointeurs post-audio (v5)
+
+Tous les offsets d'en-tête pouvant pointer vers des données post-audio. v5 les gère tous :
+
+| Offset | Nom | Type | Couverture v5 |
+|--------|-----|------|---------------|
+| `0x0004` | Table audio | Table audio | Toujours reconstruite |
+| `0x0060` | Table audio suppl. | Table audio | Toujours reconstruite |
+| `0x005C` | Binaries 1 | Table (count + entrées) | En-tête + internes |
+| `0x0064` | Single-Binaries | Table (count + entrées) | En-tête + internes |
+| `0x0068` | Special Symbols | Table (count + entrées) | En-tête + internes |
+| `0x008C` | Media Flags | Pointeur direct | En-tête seulement |
+| `0x0090` | Game Binaries 2 | Table (count + entrées) | En-tête + internes |
+| `0x0094` | Special OID List | Pointeur direct | En-tête seulement |
+| `0x0098` | Game Binaries 3 | Table (count + entrées) | En-tête + internes |
+| `0x00A0` | Single Binary 1 | Pointeur direct | En-tête seulement |
+| `0x00A8` | Single Binary 2 | Pointeur direct | En-tête seulement |
+| `0x00C8` | Single Binary 3 | Pointeur direct | En-tête seulement |
+| `0x00CC` | Binaries Table 4 | Table (count + entrées) | En-tête + internes |
 
 ---
 
@@ -839,7 +937,7 @@ Construcción idéntica a `libtiptoi.c`: Header → Tabla → Audio → Checksum
 
 **Modo experimental** (cuando existen datos post-audio como binarios de juego):
 
-Confirmación interactiva antes del parche (o `--force`). Los datos post-audio se añaden bit a bit, solo 3 punteros de cabecera conocidos se corrigen. Sin escaneo ciego. El archivo de salida recibe el sufijo `_experimentell`.
+Confirmación interactiva antes del parche (o `--force`). Los datos post-audio se añaden bit a bit, los 11 punteros de cabecera conocidos se corrigen (incluyendo las estructuras internas de las tablas). Sin escaneo ciego. El archivo de salida recibe el sufijo `_experimentell`.
 
 ---
 
@@ -859,9 +957,9 @@ Sin deduplicación: cada índice de tabla recibe su propia copia de audio (como 
 Además de los pasos del modo seguro:
 
 1. **Añadir datos post-audio** bit a bit después del nuevo bloque de audio.
-2. **Corregir solo punteros de cabecera conocidos** en las posiciones `0x005C` (tabla de binarios), `0x0064` (tabla de binarios individuales) y `0x0068` (tabla de símbolos especiales).
-3. **Corregir estructuras internas de tablas binarias** — cada tabla tiene un formato conocido (`count + count × offset`).
-4. **Sin escaneo ciego** — las versiones anteriores escaneaban cada posición de 4 bytes, corrompiendo comandos de script, valores de timer y códigos OID → cuelgues. v4 elimina esto por completo.
+2. **Corregir los 11 punteros de cabecera conocidos** que pueden referenciar datos post-audio. Ver [Cobertura de punteros post-audio](#pointer-coverage-es) más abajo.
+3. **Corregir estructuras internas de tablas binarias** — las tablas con `has_internals=True` contienen sub-punteros que también se desplazan.
+4. **Sin escaneo ciego** — las versiones anteriores escaneaban cada posición de 4 bytes, corrompiendo comandos de script, valores de timer y códigos OID → cuelgues. v5 solo toca offsets de cabecera documentados y sus estructuras internas.
 
 #### Cifrado XOR
 
@@ -964,7 +1062,7 @@ result = patch_gme(Path("entrada.gme"), Path("tts_output/"), Path("salida.gme"),
 | Decisión | Justificación |
 |---|---|
 | **Sin deduplicación** | libtiptoi.c escribe cada índice como copia separada. Más seguro, evita riesgos con referencias de offset. |
-| **Sin escaneo ciego** | v3 escaneaba todas las posiciones de 4 bytes → corrompía scripts → crashes. v4 solo corrige 3 offsets de cabecera documentados. |
+| **Sin escaneo ciego** | v3 escaneaba todas las posiciones de 4 bytes → corrompía scripts → crashes. v5 solo corrige 11 offsets de cabecera documentados y sus estructuras internas. |
 | **Dos modos explícitos** | Separación clara entre seguro (probado) y experimental (mejor esfuerzo), con marcado de archivos de salida. |
 | **CLI compatible con tttool** | Mismos nombres de comandos (`media`, `assemble`, `info`) → reemplazo directo en scripts existentes. |
 | **Sin dependencias** | Solo stdlib de Python → funciona en cualquier lugar con Python 3.10+. |
@@ -982,8 +1080,38 @@ result = patch_gme(Path("entrada.gme"), Path("tts_output/"), Path("salida.gme"),
 | `0x0060` | Offset tabla de audio adicional |
 | `0x0064` | Offset tabla de binarios individuales |
 | `0x0068` | Offset tabla de símbolos especiales |
+| `0x008C` | Offset media flags |
+| `0x0090` | Offset tabla game binaries 2 |
+| `0x0094` | Offset lista OID especiales |
+| `0x0098` | Offset tabla game binaries 3 |
+| `0x00A0` | Offset single binary 1 |
+| `0x00A8` | Offset single binary 2 |
+| `0x00C8` | Offset single binary 3 |
+| `0x00CC` | Offset tabla binarios 4 |
 
 Documentación completa: [GME-Format.md](https://github.com/entropia/tip-toi-reveng/blob/master/GME-Format.md)
+
+<a id="pointer-coverage-es"></a>
+
+#### Cobertura de punteros post-audio (v5)
+
+Todos los offsets de cabecera que pueden apuntar a datos post-audio. v5 los maneja todos:
+
+| Offset | Nombre | Tipo | Cobertura v5 |
+|--------|--------|------|--------------|
+| `0x0004` | Tabla audio | Tabla audio | Siempre reconstruida |
+| `0x0060` | Tabla audio adicional | Tabla audio | Siempre reconstruida |
+| `0x005C` | Binaries 1 | Tabla (count + entradas) | Cabecera + internas |
+| `0x0064` | Single-Binaries | Tabla (count + entradas) | Cabecera + internas |
+| `0x0068` | Special Symbols | Tabla (count + entradas) | Cabecera + internas |
+| `0x008C` | Media Flags | Puntero directo | Solo cabecera |
+| `0x0090` | Game Binaries 2 | Tabla (count + entradas) | Cabecera + internas |
+| `0x0094` | Special OID List | Puntero directo | Solo cabecera |
+| `0x0098` | Game Binaries 3 | Tabla (count + entradas) | Cabecera + internas |
+| `0x00A0` | Single Binary 1 | Puntero directo | Solo cabecera |
+| `0x00A8` | Single Binary 2 | Puntero directo | Solo cabecera |
+| `0x00C8` | Single Binary 3 | Puntero directo | Solo cabecera |
+| `0x00CC` | Binaries Table 4 | Tabla (count + entradas) | Cabecera + internas |
 
 ---
 

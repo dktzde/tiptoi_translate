@@ -1,5 +1,57 @@
 # Changelog – gme_patch.py
 
+## v5 – 2026-03-26
+
+### Vollständige Post-Audio Pointer-Abdeckung
+
+**Ursache:** v4 korrigierte nur 3 Header-Pointer (0x005C, 0x0064, 0x0068) –
+alle drei waren bei Feuerwehr NULL. Die tatsächlichen 7 Post-Audio-Pointer
+(0x0090–0x00CC) blieben unbehandelt → experimenteller Modus konnte nicht
+funktionieren.
+
+### Erweitert: 11 bekannte Header-Offsets
+
+Neues `_POST_AUDIO_HEADERS`-Dictionary mit allen bekannten Offsets aus
+GME-Format.md / tttool GMEParser.hs:
+
+| Offset | Name | Typ |
+|--------|------|-----|
+| `0x005C` | Binaries 1 | Tabelle (count + Einträge) |
+| `0x0064` | Single-Binaries | Tabelle (count + Einträge) |
+| `0x0068` | Special Symbols | Tabelle (count + Einträge) |
+| `0x008C` | Media Flags | Direkt-Pointer |
+| `0x0090` | Game Binaries 2 | Tabelle (count + Einträge) |
+| `0x0094` | Special OID List | Direkt-Pointer |
+| `0x0098` | Game Binaries 3 | Tabelle (count + Einträge) |
+| `0x00A0` | Single Binary 1 | Direkt-Pointer |
+| `0x00A8` | Single Binary 2 | Direkt-Pointer |
+| `0x00C8` | Single Binary 3 | Direkt-Pointer |
+| `0x00CC` | Binaries Table 4 | Tabelle (count + Einträge) |
+
+### Verbessert: `_shift_binary_table` (Scan-Ansatz)
+
+- Nimmt `table_start` direkt entgegen (statt den Wert selbst zu lesen)
+- Scan-Bereich: `count × 16 Bytes` ab `table_start + 4`
+- Nur Werte im Bereich `[old_audio_end, orig_file_size)` werden verschoben
+- Sicher, da Name-Strings und Lengths nie in diesem Adressbereich liegen
+
+### Verbessert: `info_gme`
+
+- Zeigt alle 11 bekannten Header-Pointer an
+- Markiert Post-Audio-Pointer mit `← Post-Audio`
+- Zählt aktive Post-Audio-Pointer
+
+### README
+
+- Pointer-Coverage-Tabelle in allen 4 Sprachen (EN/DE/FR/ES)
+- Erweiterte Dateiformat-Referenz mit allen Header-Offsets
+
+### Files
+- `gme_patch.py` v5
+- `backup/gme_patch_v5.py`
+
+---
+
 ## v4 – 2026-03-26
 
 ### Komplett-Umbau nach libtiptoi.c-Vorbild

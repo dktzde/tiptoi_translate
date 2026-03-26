@@ -1,5 +1,5 @@
 """
-gme_patch.py v4 – GME Audio-Patcher (Binary-Patch, kein YAML-Roundtrip)
+gme_patch.py v5 – GME Audio-Patcher (Binary-Patch, kein YAML-Roundtrip)
 =========================================================================
 Ersetzt Audio-Dateien in einer Tiptoi-GME direkt im Binary.
 Spiele, Scripts und alle unbekannten Segmente bleiben bitgenau erhalten.
@@ -184,49 +184,63 @@ def _patch_safe(
 
 # ─── Experimenteller Modus (Safe + Post-Audio + gezielte Pointer) ────────────
 
-# Bekannte Header-Offsets die auf Post-Audio-Daten zeigen können
+# Alle bekannten Header-Offsets die auf Post-Audio-Daten zeigen können
 # (aus GME-Format.md / tttool GMEParser.hs)
-_POST_AUDIO_HEADER_PTRS = [
-    0x005C,   # Binaries-Tabelle (Spiele)
-    0x0064,   # Single-Binaries-Tabelle
-    0x0068,   # Special-Symbols-Tabelle (Spielfiguren etc.)
-]
+#
+# Header-Offset → (Name, hat_interne_pointer)
+#
+# has_internals=True:  Header zeigt auf eine Tabelle mit count + Einträgen,
+#                      deren Offset-Felder ebenfalls verschoben werden müssen.
+# has_internals=False: Header zeigt direkt auf Daten (kein inneres Pointer-Netz).
+_POST_AUDIO_HEADERS: dict[int, tuple[str, bool]] = {
+    0x005C: ("Binaries 1",        True),
+    0x0064: ("Single-Binaries",   True),
+    0x0068: ("Special Symbols",   True),
+    0x008C: ("Media Flags",       False),
+    0x0090: ("Game Binaries 2",   True),
+    0x0094: ("Special OID List",  False),
+    0x0098: ("Game Binaries 3",   True),
+    0x00A0: ("Single Binary 1",   False),
+    0x00A8: ("Single Binary 2",   False),
+    0x00C8: ("Single Binary 3",   False),
+    0x00CC: ("Binaries Table 4",  True),
+}
 
 
-def _shift_binary_table(result: bytearray, table_ptr_offset: int,
+def _shift_binary_table(result: bytearray, table_start: int,
                         old_audio_end: int, orig_file_size: int,
                         shift: int) -> int:
     """Verschiebt Pointer innerhalb einer Binary-Tabelle.
 
     Binary-Tabellen haben das Format:
-      offset (bei table_ptr_offset im Header) → Tabellen-Start
-      Tabellen-Start: count (uint32) + count × (offset uint32, length uint32)
+      count (uint32)
+      count Einträge, jeweils:
+        - NULL: uint32 = 0 (4 Bytes)
+        - Non-NULL: offset(4) + length(4) + name(8) = 16 Bytes
+          offset zeigt auf Binary-Daten im Post-Audio-Bereich.
+
+    Scan-Ansatz: alle uint32-Werte im Tabellenbereich prüfen.
+    Sicher, weil Name-Strings (ASCII) und Lengths (klein) nie im
+    Post-Audio-Adressbereich liegen.
 
     Gibt Anzahl verschobener Pointer zurück.
     """
-    table_start = r32(bytes(result), table_ptr_offset)
-    if table_start == 0 or table_start == 0xFFFFFFFF:
+    if table_start + 4 > len(result):
         return 0
-    if table_start < 0 or table_start + 4 > len(result):
-        return 0
-
-    updated = 0
     bin_count = r32(bytes(result), table_start)
-
-    # Plausibilitätsprüfung: count sollte klein sein (< 10000)
     if bin_count == 0 or bin_count > 10000:
         return 0
 
-    # Jeder Binary-Eintrag hat einen Header mit Offset-Pointern
-    # Format variiert – wir scannen nur die bekannte Struktur:
-    # count × (offset: u32) direkt nach dem count-Feld
-    for j in range(bin_count):
-        ptr_pos = table_start + 4 + j * 4
-        if ptr_pos + 4 > len(result):
-            break
-        val = r32(bytes(result), ptr_pos)
+    # Scan-Bereich: count-Feld überspringen, maximal count × 16 Bytes
+    scan_size = min(bin_count * 16, 4096)
+    scan_start = table_start + 4
+    scan_end = min(scan_start + scan_size, len(result) - 3)
+
+    updated = 0
+    for pos in range(scan_start, scan_end, 4):
+        val = r32(bytes(result), pos)
         if old_audio_end <= val < orig_file_size:
-            w32(result, ptr_pos, val + shift)
+            w32(result, pos, val + shift)
             updated += 1
 
     return updated
@@ -293,21 +307,27 @@ def _patch_experimental(
     # 4. Post-Audio-Daten anhängen
     result.extend(post_audio)
 
-    # 5. Gezielte Pointer-Korrektur (NUR bekannte Header-Felder)
+    # 5. Gezielte Pointer-Korrektur (alle bekannten Header-Felder)
     updated_ptrs = 0
-    for hdr_off in _POST_AUDIO_HEADER_PTRS:
+    for hdr_off, (name, has_internals) in _POST_AUDIO_HEADERS.items():
         if hdr_off + 4 > len(result):
             continue
         val = r32(bytes(result), hdr_off)
         if val == 0 or val == 0xFFFFFFFF:
             continue
         if last_audio_end <= val < orig_file_size:
-            w32(result, hdr_off, val + shift)
+            new_val = val + shift
+            w32(result, hdr_off, new_val)
             updated_ptrs += 1
+            print(f"  0x{hdr_off:04X} {name:20s} 0x{val:08X} → 0x{new_val:08X}")
             # Binary-Table-Interna verschieben
-            updated_ptrs += _shift_binary_table(
-                result, hdr_off, last_audio_end, orig_file_size, shift
-            )
+            if has_internals:
+                n = _shift_binary_table(
+                    result, new_val, last_audio_end, orig_file_size, shift
+                )
+                if n:
+                    updated_ptrs += n
+                    print(f"         └─ {n} interne Pointer verschoben")
 
     # 6. Zusatz-Audio-Tabelle (0x0060) aktualisieren
     add_table_off = r32(bytes(result), 0x0060)
@@ -521,12 +541,17 @@ def info_gme(gme_path: Path) -> None:
     if post_audio_size > 0:
         print(f"Post-Audio:     0x{last_audio_end:08X} – 0x{orig_file_size - 4:08X} "
               f"({post_audio_size:,} Bytes)")
-        # Bekannte Pointer anzeigen
-        for name, off in [("Binaries", 0x005C), ("Single-Bin", 0x0064), ("Symbols", 0x0068)]:
-            val = r32(data, off)
+        # Alle bekannten Header-Pointer anzeigen
+        post_count = 0
+        for hdr_off, (name, _) in _POST_AUDIO_HEADERS.items():
+            val = r32(data, hdr_off)
             if val and val != 0xFFFFFFFF:
-                in_post = "← Post-Audio" if last_audio_end <= val < orig_file_size else ""
-                print(f"  {name:12s}  0x{off:04X} → 0x{val:08X} {in_post}")
+                if last_audio_end <= val < orig_file_size:
+                    print(f"  {name:20s}  0x{hdr_off:04X} → 0x{val:08X}  ← Post-Audio")
+                    post_count += 1
+                else:
+                    print(f"  {name:20s}  0x{hdr_off:04X} → 0x{val:08X}")
+        print(f"  Post-Audio-Pointer: {post_count}")
     else:
         print(f"Post-Audio:     keine")
 
