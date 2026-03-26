@@ -1,5 +1,51 @@
 # Changelog – gme_patch.py
 
+## v4 – 2026-03-26
+
+### Komplett-Umbau nach libtiptoi.c-Vorbild
+
+**Ursache:** v3 verursachte Loops und Stift-Abstürze durch blinden Pointer-Scan
+(Schritt 8 in v3: jeder uint32-Wert im Zielbereich wurde als Pointer interpretiert
+und verschoben → Script-Befehle, Timer, OID-Codes wurden korrumpiert).
+
+### Zwei Modi: Safe + Experimentell
+
+- **Safe-Modus** (kein Post-Audio): Aufbau exakt wie libtiptoi.c `replaceAudio()`:
+  Header → Tabelle → Audio → Checksum. Keine Pointer-Korrektur nötig.
+  Wenn keine Post-Audio-Daten vorhanden → dieser Modus wird automatisch gewählt.
+
+- **Experimenteller Modus** (Post-Audio vorhanden):
+  - Interaktive Rückfrage vor dem Patch (oder `--force`)
+  - Ausgabedatei erhält `_experimentell` im Namen
+  - Post-Audio-Daten (Binaries, Spiele) werden bitgenau angehängt
+  - NUR bekannte Header-Pointer (0x005C, 0x0064, 0x0068) werden gezielt korrigiert
+  - KEIN Blind-Scan mehr (der Killer-Bug aus v3)
+
+### Kein Duplikate-Dedup mehr
+- Jeder Tabellenindex bekommt eigene Audio-Kopie (wie libtiptoi.c)
+- Sicherer, vermeidet Komplikationen bei Offset-Referenzen
+
+### tttool-kompatible CLI (argparse)
+- `gme_patch.py media -d DIR INPUT.gme` → Audio extrahieren (neu)
+- `gme_patch.py assemble INPUT.gme DIR/ OUT.gme` → Audio ersetzen
+- `gme_patch.py info INPUT.gme` → GME-Info anzeigen
+- `-h` / `--help` für alle Befehle
+- `-f` / `--force` für experimentellen Modus ohne Rückfrage
+
+### API für Pipeline-Integration
+- `patch_gme()` gibt dict zurück: `{"mode", "output", "entries", "replaced", "kept"}`
+- Pipeline kann Modus und tatsächlichen Ausgabepfad auswerten
+
+### Entfernt
+- Blind-Scan über alle Byte-Positionen (v3 Schritt 8)
+- libtiptoi-Style `0000.ogg` Namensformat
+- Alte CLI ohne argparse
+
+### Files
+- `gme_patch.py` v4
+
+---
+
 ## v3 – 2026-03-22
 
 ### Bugfix (kritisch)
@@ -31,7 +77,6 @@
 
 ---
 
-
 ## v1 – 2026-03-21
 
 Initial working prototype.
@@ -40,7 +85,7 @@ Initial working prototype.
 - Parse GME audio table from binary (offset at 0x0004, 8 bytes/entry)
 - Auto-detect XOR encryption key from first audio file magic bytes
 - Replace audio files from a `media_dir/` directory
-- Auto-detect file naming: `0000.ogg` or `Prefix_0.ogg` (index from trailing number)
+- Auto-detect file naming: `Prefix_0.ogg` (index from trailing number)
 - Preserve all non-audio data bit-for-bit (header, scripts, games, unknown segments)
 - Update main audio table + additional audio table (0x0060) with new offsets
 - Recalculate checksum (additive sum of all bytes)
