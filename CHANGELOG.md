@@ -1,5 +1,14 @@
 # Changelog – pipeline.py / Skripte / Notebooks
 
+## pipeline.py (backup v3.24) – 2026-03-26
+### Drei neue Dialekt-Sprachen + 8 Stimmen pro Sprache
+- **Vogtländisch** (`--language vo`): magistral-medium-latest, Prompt mit Lautregeln (aa, isch, -la, weiche Konsonanten)
+- **Bayrisch** (`--language by`): magistral-medium-latest, Prompt Oberbairisch/München (oa, i, ned, -erl)
+- **Plattdeutsch** (`--language nd`): magistral-medium-latest, Prompt Hamburger Platt (maken, dat/wat, Steen/Huus)
+- Alle 5 Sprachen auf **8 Stimmen** erweitert (FR: +DeniseNeural, GerardNeural, FabriceNeural; CH/BY/VO/ND: voller deutscher Stimmen-Pool)
+- Stimmen-Reihenfolge nach Dialekt-Nähe: BY → AT-Stimmen zuerst, VO/ND → Multilingual-Stimmen zuerst, CH → CH-Stimmen zuerst
+- Neue Dialekte nutzen `magistral-medium-latest` (Reasoning-Modell) für bessere Dialekt-Qualität
+
 ## colab_pipeline_v22 + pipeline.py (backup v3.23) – 2026-03-26
 ### Copyright/Noise-Erkennung in Colab + Pipeline integriert
 - **colab_pipeline_v22** (cell-12): `_is_noise_transcript()` nach Whisper – zählt + meldet Copyright-Stems

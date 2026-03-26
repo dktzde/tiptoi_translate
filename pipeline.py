@@ -72,11 +72,14 @@ OGG_SAMPLERATE = "22050"
 LANG_CONFIG = {
     "fr": {
         "voices": [
-            "fr-FR-HenriNeural",                  # 0 – tief (männl. Erzähler)
-            "fr-FR-EloiseNeural",                  # 1 – weibl. Kinderstimme
-            "fr-BE-CharlineNeural",                # 2 – weibl. jünger (Kind 2)
-            "fr-FR-RemyMultilingualNeural",        # 3 – männl. natürlich (Mann 2)
-            "fr-FR-VivienneMultilingualNeural",    # 4 – weibl. natürlich (Erzählerin)
+            "fr-FR-HenriNeural",                  # 0 – m, tiefer Erzähler
+            "fr-FR-EloiseNeural",                  # 1 – f, Kinderstimme
+            "fr-BE-CharlineNeural",                # 2 – f, jünger (Kind 2)
+            "fr-FR-RemyMultilingualNeural",        # 3 – m, natürlich
+            "fr-FR-VivienneMultilingualNeural",    # 4 – f, Erzählerin
+            "fr-FR-DeniseNeural",                  # 5 – f, warm/reif
+            "fr-BE-GerardNeural",                  # 6 – m, belgisch
+            "fr-CH-FabriceNeural",                 # 7 – m, Schweizer FR
         ],
         "model": "mistral-medium-latest",
         "temperature": 0.8,
@@ -90,9 +93,14 @@ LANG_CONFIG = {
     },
     "ch": {
         "voices": [
-            "de-CH-JanNeural",    # 0 – männl. (Schweizerdeutsch)
-            "de-CH-LeniNeural",   # 1 – weibl. (Schweizerdeutsch)
-            "de-AT-JonasNeural",  # 2 – männl. (Österreichisch, näher an CH als Hochdeutsch)
+            "de-CH-JanNeural",                     # 0 – m, Schweizerdeutsch
+            "de-CH-LeniNeural",                    # 1 – f, Schweizerdeutsch
+            "de-AT-JonasNeural",                   # 2 – m, Österreichisch (näher an CH)
+            "de-AT-IngridNeural",                  # 3 – f, Österreichisch
+            "de-DE-FlorianMultilingualNeural",     # 4 – m, multilingual
+            "de-DE-SeraphinaMultilingualNeural",   # 5 – f, multilingual
+            "de-DE-ConradNeural",                  # 6 – m, Hochdeutsch
+            "de-DE-KatjaNeural",                   # 7 – f, Hochdeutsch
         ],
         "model": "mistral-medium-latest",
         "temperature": 0.3,
@@ -103,6 +111,111 @@ LANG_CONFIG = {
             "(Berner Dialekt), verwende einfache Wörter für Kinder und schreibe es so, "
             "wie man es spricht (phonetisch für TTS). "
             "Antworte nur mit der Übersetzung, ohne Erklärungen."
+        ),
+    },
+    "vo": {
+        "voices": [
+            "de-DE-FlorianMultilingualNeural",     # 0 – m, multilingual (beste Dialekt-Aussprache)
+            "de-DE-SeraphinaMultilingualNeural",   # 1 – f, multilingual
+            "de-DE-ConradNeural",                  # 2 – m
+            "de-DE-KatjaNeural",                   # 3 – f
+            "de-DE-KillianNeural",                 # 4 – m
+            "de-DE-AmalaNeural",                   # 5 – f
+            "de-CH-JanNeural",                     # 6 – m
+            "de-AT-IngridNeural",                  # 7 – f
+        ],
+        "model": "magistral-medium-latest",
+        "temperature": 0.3,
+        "suffix": "_vo",
+        "label": "VO",
+        "system_prompt": (
+            "Du bist ein Übersetzer für Kinderbücher. Übersetze den folgenden "
+            "hochdeutschen Text ins Vogtländische (sächsisch-vogtländischer Dialekt). "
+            "Der Text wird von einer Hochdeutsch-TTS-Stimme vorgelesen – schreibe daher "
+            "so, dass die Hochdeutsch-Aussprache möglichst vogtländisch klingt.\n\n"
+            "Lautregeln:\n"
+            "- ei → aa (Stein → Staa, klein → klaa, mein → maa)\n"
+            "- au → aa (Baum → Baam, Haus → Haas, laufen → laafn)\n"
+            "- eu/äu → aa (Feuer → Faar, Bäume → Bääm)\n"
+            "- Weiche Anlaut-Konsonanten: p → b, t → d, k → g (Kuchen → Guchn, Tür → Diir)\n"
+            "- ich → isch, nicht → nischd, auch → aa\n"
+            "- -chen → -la (Häuschen → Heisla, Hündchen → Hindla)\n"
+            "- -en am Ende → -n (laufen → laafn, machen → machn)\n"
+            "- Typische Wörter: nu (ja), fei (wirklich), ä weng (ein wenig), "
+            "naus (hinaus), nei (hinein), drüm (deshalb), iiberhaapt (überhaupt)\n\n"
+            "Verwende einfache, kindgerechte Sprache. "
+            "Antworte NUR mit der Übersetzung, ohne Erklärungen."
+        ),
+    },
+    "by": {
+        "voices": [
+            "de-AT-JonasNeural",                   # 0 – m, Österreichisch (nächst an BY)
+            "de-AT-IngridNeural",                  # 1 – f, Österreichisch
+            "de-DE-FlorianMultilingualNeural",     # 2 – m, multilingual
+            "de-DE-SeraphinaMultilingualNeural",   # 3 – f, multilingual
+            "de-CH-JanNeural",                     # 4 – m
+            "de-CH-LeniNeural",                    # 5 – f
+            "de-DE-ConradNeural",                  # 6 – m
+            "de-DE-KatjaNeural",                   # 7 – f
+        ],
+        "model": "magistral-medium-latest",
+        "temperature": 0.3,
+        "suffix": "_by",
+        "label": "BY",
+        "system_prompt": (
+            "Du bist ein Übersetzer für Kinderbücher. Übersetze den folgenden "
+            "hochdeutschen Text ins Bairische (Oberbairisch, Münchner Raum). "
+            "Der Text wird von einer Hochdeutsch-TTS-Stimme vorgelesen – schreibe daher "
+            "so, dass die Aussprache möglichst bairisch klingt.\n\n"
+            "Lautregeln:\n"
+            "- ei → oa (Stein → Stoa, klein → kloa, mein → moa)\n"
+            "- ich → i (ich bin → i bin, ich habe → i hob)\n"
+            "- nicht → ned, nichts → nix, kein → koa, keine → koane\n"
+            "- ist → is, das → des, was → wos, es → as\n"
+            "- ein/eine → a/an (ein Hund → a Hund)\n"
+            "- haben → ham, geben → gem, gehen → geh\n"
+            "- -en → -n (machen → machn, laufen → lafn)\n"
+            "- -chen → -l oder -erl (Häuschen → Heisl, Vögelchen → Vogerl)\n"
+            "- Typische Wörter: gell (nicht wahr), halt (eben), fei (wirklich), "
+            "schaug (schau), a bisserl (ein bisschen), Bua (Junge), Madl (Mädchen), "
+            "dahoam (daheim), Gaudi (Spaß)\n\n"
+            "Verwende einfache, kindgerechte Sprache. "
+            "Antworte NUR mit der Übersetzung, ohne Erklärungen."
+        ),
+    },
+    "nd": {
+        "voices": [
+            "de-DE-FlorianMultilingualNeural",     # 0 – m, multilingual (beste Dialekt-Aussprache)
+            "de-DE-SeraphinaMultilingualNeural",   # 1 – f, multilingual
+            "de-DE-KillianNeural",                 # 2 – m
+            "de-DE-KatjaNeural",                   # 3 – f
+            "de-DE-ConradNeural",                  # 4 – m
+            "de-DE-AmalaNeural",                   # 5 – f
+            "de-AT-JonasNeural",                   # 6 – m
+            "de-CH-LeniNeural",                    # 7 – f
+        ],
+        "model": "magistral-medium-latest",
+        "temperature": 0.3,
+        "suffix": "_nd",
+        "label": "ND",
+        "system_prompt": (
+            "Du bist ein Übersetzer für Kinderbücher. Übersetze den folgenden "
+            "hochdeutschen Text ins Plattdeutsche (Nordniederdeutsch / Hamburger Platt). "
+            "Der Text wird von einer Hochdeutsch-TTS-Stimme vorgelesen – schreibe daher "
+            "so, dass die Aussprache möglichst plattdeutsch klingt.\n\n"
+            "Lautregeln (keine hochdeutsche Lautverschiebung!):\n"
+            "- machen → maken, Kuchen → Koken, suchen → söken\n"
+            "- pf → pp/p (Apfel → Appel, Pferd → Peerd, Pfanne → Pann)\n"
+            "- z → t (zu → to, zwei → twee, Zahn → Tahn)\n"
+            "- das → dat, was → wat, es → dat/et, ich → ik, auch → ook\n"
+            "- ei → ee (Stein → Steen, klein → kleen)\n"
+            "- au → uu (Haus → Huus, Maus → Muus)\n"
+            "- -chen → -ken (Häuschen → Hüüsken)\n"
+            "- Typische Wörter: un (und), is (ist), hett (hat), snacken (sprechen), "
+            "kieken (schauen), lütt (klein), groot (groß), Deern (Mädchen), "
+            "Jung (Junge), dor (dort), wat (was), nix (nichts)\n\n"
+            "Verwende einfache, kindgerechte Sprache. "
+            "Antworte NUR mit der Übersetzung, ohne Erklärungen."
         ),
     },
 }
