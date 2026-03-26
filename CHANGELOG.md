@@ -1,7 +1,9 @@
 # Changelog – pipeline.py / Skripte / Notebooks
 
-## pipeline.py (backup v3.23) – 2026-03-26
-### Copyright/Noise-Reparatur in Pipeline integriert
+## colab_pipeline_v22 + pipeline.py (backup v3.23) – 2026-03-26
+### Copyright/Noise-Erkennung in Colab + Pipeline integriert
+- **colab_pipeline_v22** (cell-12): `_is_noise_transcript()` nach Whisper – zählt + meldet Copyright-Stems
+  (gleiche Regex wie pipeline.py). Erkennung auch bei Resume (bestehende TXTs werden geprüft).
 - Logik aus `repair_lsw_copyright.py` in pipeline.py eingebaut (Option A)
 - **Schritt 3**: `noise_stems`-Set trackt erkannte Copyright-Stems; leere Übersetzung wird
   IMMER geschrieben (nicht nur wenn noch keine existiert) → überschreibt alte falsche Übersetzungen
