@@ -1,5 +1,26 @@
 # Changelog – pipeline.py / Skripte / Notebooks
 
+## colab_pipeline_v21 + pipeline.py (backup v3.22) – 2026-03-24
+### Bugfix (cell-9)
+- `k_max < 2` (≤2 Samples): Guard verhindert `max()` auf leerem Dict + IndexError
+- `MIN_K > k_max`: Fallback auf gesamten K-Bereich statt leerem `proposals`-Array
+### Neu
+- `pipeline.py`: neues Argument `--min-k K` (Standard: 4) – schreibt `MIN_K = K` in `colab_config.py`
+- `colab_pipeline_v21` cell-4: `MIN_K` wird aus `colab_config.py` geladen statt hardcoded (`globals().get('MIN_K', 4)`)
+- `colab_pipeline_v21` cell-9 (Clustering): komplett neu
+  - Berechnet Silhouette für alle K=2..MAX_K
+  - ASCII-Chart der gesamten Kurve mit Markierung der MIN_K-Grenze
+  - Findet lokale Maxima im Bereich K≥MIN_K
+  - Präsentiert 3 Vorschläge (lokale Maxima nach Score, Rest auffüllen) mit `input()`-Abfrage
+  - Nutzer wählt [1/2/3] oder gibt direkte Zahl ein; Enter = Vorschlag 1
+
+## pipeline.py (v32, backup v3.21) – 2026-03-24
+### Neu
+- `tts_one()`: Retry-Logik mit bis zu 3 Versuchen und steigender Wartezeit (5s, 10s, 15s + Jitter) statt direktem Überspringen bei Fehler (503, "No audio received" etc.)
+- Hauptschleife: zufällige Pause von 1,5–3,0 Sekunden zwischen TTS-Anfragen (`asyncio.sleep(random.uniform(1.5, 3.0))`) zur Reduktion von Rate-Limit-Fehlern
+- `failed_tts`-Liste: Dateien die nach allen Retries fehlschlagen werden gesammelt und in Schritt 5b erneut versucht (mit längerer Pause 5–10s)
+- `_clean_translation()`: Mistral-Preamble-Erkennung (`_PREAMBLE_RE`) – wenn Text Muster wie "Voici la traduction", "je suis prêt à traduire" etc. enthält und kürzer als 200 Zeichen ist, wird leerer String zurückgegeben → TTS wird nicht aufgerufen (verhindert "No audio received"-Fehler bei leerem Transkript)
+
 ## colab_sync.sh (v3) – 2026-03-22
 ### Neu
 - Neuer Modus `bench`: lädt nur `gpu_benchmark.csv` von Drive → `backup/gpu_benchmark.csv` (mit Append-Logik)

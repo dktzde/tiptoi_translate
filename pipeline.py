@@ -25,6 +25,7 @@ import re
 import sys
 import json
 import time
+import random
 import asyncio
 import subprocess
 import argparse
@@ -129,13 +130,23 @@ _MD_RE = re.compile(
     re.MULTILINE
 )
 
+_PREAMBLE_RE = re.compile(
+    r'(Bien s.r|je suis pr.t .* traduire|Voici la traduction|'
+    r'Ich bin bereit|Hier ist die .bersetzung|Here is the translation)',
+    re.IGNORECASE,
+)
+
 def _clean_translation(text: str) -> str:
-    """Entfernt Markdown-Formatierung und Emojis aus Übersetzungstext vor TTS."""
+    """Entfernt Markdown-Formatierung und Emojis aus Übersetzungstext vor TTS.
+    Gibt leeren String zurück wenn der Text nur ein Mistral-Preamble ohne echten Inhalt ist."""
     cleaned = emoji.replace_emoji(text, replace='')  # Unicode-Emojis entfernen
     cleaned = _MD_RE.sub('', cleaned)
     cleaned = re.sub(r':[a-z_]+:', '', cleaned)       # :emoji_name: Kurzform entfernen
     cleaned = re.sub(r'\s*[–—]\s*', ', ', cleaned)   # Gedankenstrich → Sprechpause
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    # Mistral-Preamble ohne echten Inhalt (z.B. "Voici la traduction : ...") → überspringen
+    if _PREAMBLE_RE.search(cleaned) and len(cleaned) < 200:
+        return ''
     return cleaned
 
 
@@ -429,19 +440,29 @@ def translate_batch(
 
 # ─── Pro-Datei: TTS ───────────────────────────────────────────────────────────
 
-async def tts_one(fr_text: str, mp3_file: Path, voice: str) -> bool:
-    """Gibt True zurück bei Erfolg, False bei Fehler (überspringen)."""
+async def tts_one(fr_text: str, mp3_file: Path, voice: str, retries: int = 3) -> bool:
+    """Gibt True zurück bei Erfolg, False wenn alle Retries fehlschlagen."""
     if mp3_file.exists():
         return True
-    try:
-        communicator = edge_tts.Communicate(fr_text, voice=voice)
-        await communicator.save(str(mp3_file))
-        return True
-    except Exception as e:
-        print(f"    ⚠ TTS Fehler – überspringe: {mp3_file.name} ({e})", flush=True)
-        if mp3_file.exists():
-            mp3_file.unlink()
-        return False
+    last_err = None
+    for attempt in range(1, retries + 1):
+        try:
+            communicator = edge_tts.Communicate(fr_text, voice=voice)
+            await communicator.save(str(mp3_file))
+            if mp3_file.exists() and mp3_file.stat().st_size > 0:
+                return True
+            if mp3_file.exists():
+                mp3_file.unlink()
+        except Exception as e:
+            last_err = e
+            if mp3_file.exists():
+                mp3_file.unlink()
+        if attempt < retries:
+            wait = attempt * 5 + random.uniform(0, 2)
+            print(f"    ⚠ TTS Fehler (Versuch {attempt}/{retries}), warte {wait:.1f}s: {mp3_file.name} ({last_err})", flush=True)
+            await asyncio.sleep(wait)
+    print(f"    ✗ TTS endgültig fehlgeschlagen: {mp3_file.name} ({last_err})", flush=True)
+    return False
 
 
 # ─── Speech-Timestamps laden (aus Colab _ts.json) ────────────────────────────
@@ -516,7 +537,7 @@ def mix_with_original(original_ogg: Path, mp3_file: Path, ogg_out: Path,
 
 async def run(gme_path: Path, language: str, voice_override: str | None,
               whisper_model: str, limit: int = 0, skip_assemble: bool = False,
-              offline: bool = False, use_patcher: bool = False):
+              offline: bool = False, use_patcher: bool = False, min_k: int = 4):
     if not gme_path.exists():
         print(f"Fehler: Datei nicht gefunden: {gme_path}")
         sys.exit(1)
@@ -591,7 +612,8 @@ async def run(gme_path: Path, language: str, voice_override: str | None,
             config_path.write_text(
                 f'BOOK    = "{book}"\n'
                 f'VERSION = "{PIPELINE_VERSION}"\n'
-                f'LANG    = "{language}"\n',
+                f'LANG    = "{language}"\n'
+                f'MIN_K   = {min_k}\n',
                 encoding="utf-8",
             )
             print(f"  ✓ Konfig:     {config_path.name}")
@@ -694,26 +716,17 @@ async def run(gme_path: Path, language: str, voice_override: str | None,
     # Schritt 5: Pass 4 – TTS + OGG pro Datei
     print(f"\n── Schritt 5: Pass 4 – TTS / OGG-Konvertierung ──")
 
-    for i, ogg_file in enumerate(ogg_files, 1):
-        key           = ogg_file.stem
-        translation_f = _find_resume(translated_dir, key, ".txt") or (translated_dir / f"{key}_{PIPELINE_VERSION}.txt")
-        mp3_file      = _find_resume(tts_dir, key, ".mp3")         or (tts_dir / f"{key}_{PIPELINE_VERSION}.mp3")
-        ogg_out       = tts_dir / ogg_file.name   # nie in media_dir schreiben → Originals bleiben erhalten
-        voice         = voice_for(key)
+    failed_tts: list[tuple] = []  # (ogg_file, key, translated, mp3_file, voice, i)
 
-        if not translation_f.exists():
-            continue
-        translated = _clean_translation(translation_f.read_text(encoding="utf-8"))
-        if not translated:
-            continue
-
-        print(f"  [{i}/{total}] {ogg_file.name}  [{voice.split('-')[2]}]", flush=True)
+    async def _process_tts(ogg_file, key, translated, mp3_file, voice, ogg_out, i, is_retry=False):
+        label = " [RETRY]" if is_retry else ""
+        print(f"  [{i}/{total}]{label} {ogg_file.name}  [{voice.split('-')[2]}]", flush=True)
         if not await tts_one(translated, mp3_file, voice):
-            continue
+            return False
         if mp3_file.exists() and mp3_file.stat().st_size == 0:
             print(f"    ⚠ Leere MP3 – lösche und überspringe: {mp3_file.name}", flush=True)
             mp3_file.unlink()
-            continue
+            return False
         if mp3_file.exists():
             try:
                 timing = _get_speech_timing(key, transcripts_dir)
@@ -729,6 +742,33 @@ async def run(gme_path: Path, language: str, voice_override: str | None,
                 print(f"    ⚠ ffmpeg Fehler ({e.returncode}) – überspringe: {ogg_file.name}", flush=True)
                 if mp3_file.exists():
                     mp3_file.unlink()
+        return True
+
+    for i, ogg_file in enumerate(ogg_files, 1):
+        key           = ogg_file.stem
+        translation_f = _find_resume(translated_dir, key, ".txt") or (translated_dir / f"{key}_{PIPELINE_VERSION}.txt")
+        mp3_file      = _find_resume(tts_dir, key, ".mp3")         or (tts_dir / f"{key}_{PIPELINE_VERSION}.mp3")
+        ogg_out       = tts_dir / ogg_file.name   # nie in media_dir schreiben → Originals bleiben erhalten
+        voice         = voice_for(key)
+
+        if not translation_f.exists():
+            continue
+        translated = _clean_translation(translation_f.read_text(encoding="utf-8"))
+        if not translated:
+            continue
+
+        ok = await _process_tts(ogg_file, key, translated, mp3_file, voice, ogg_out, i)
+        if not ok and not mp3_file.exists():
+            failed_tts.append((ogg_file, key, translated, mp3_file, voice, ogg_out, i))
+
+        await asyncio.sleep(random.uniform(1.5, 3.0))
+
+    # Retry-Durchlauf für fehlgeschlagene TTS-Dateien
+    if failed_tts:
+        print(f"\n── Schritt 5b: TTS-Retry für {len(failed_tts)} fehlgeschlagene Datei(en) ──")
+        for ogg_file, key, translated, mp3_file, voice, ogg_out, i in failed_tts:
+            await asyncio.sleep(random.uniform(5.0, 10.0))
+            await _process_tts(ogg_file, key, translated, mp3_file, voice, ogg_out, i, is_retry=True)
 
     # Schritt 6: GME neu packen
     if skip_assemble:
@@ -797,8 +837,15 @@ def main():
         action="store_true",
         help="[ALPHA] Schritt 6: gme_patch.py statt tttool assemble – erhält Spiele (Binary-Patch)",
     )
+    parser.add_argument(
+        "--min-k",
+        type=int,
+        default=4,
+        metavar="K",
+        help="Minimale Sprecher-Anzahl für Clustering (Standard: 4); wird in colab_config.py geschrieben",
+    )
     args = parser.parse_args()
-    asyncio.run(run(Path(args.gme), args.language, args.voice, args.whisper_model, args.limit, args.skip_assemble, args.offline, args.use_patcher))
+    asyncio.run(run(Path(args.gme), args.language, args.voice, args.whisper_model, args.limit, args.skip_assemble, args.offline, args.use_patcher, args.min_k))
 
 
 if __name__ == "__main__":
