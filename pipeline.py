@@ -675,6 +675,7 @@ async def run(gme_path: Path, language: str, voice_override: str | None,
 
     print(f"\n── Schritt 3: Pass 2 – Transkription ({total} Dateien) ──")
     pending_translation: list[tuple[str, Path]] = []   # (text, translation_file)
+    noise_stems: set[str] = set()  # Geräusch-/Copyright-Stems → Original-OGG beibehalten
 
     for i, ogg_file in enumerate(ogg_files, 1):
         key          = ogg_file.stem
@@ -689,9 +690,9 @@ async def run(gme_path: Path, language: str, voice_override: str | None,
         text = transcribe_one(ogg_file, whisper, transcript_f)
         if not text.strip() or _is_noise_transcript(text):
             if _is_noise_transcript(text):
+                noise_stems.add(key)
                 print(f"  ⚠ Geräusch/Copyright übersprungen: {ogg_file.name} ({text.strip()!r})", flush=True)
-            if not translation_f.exists():
-                new_translation_f.write_text("", encoding="utf-8")
+            new_translation_f.write_text("", encoding="utf-8")
             continue
 
         pending_translation.append((text, translation_f))
@@ -714,6 +715,19 @@ async def run(gme_path: Path, language: str, voice_override: str | None,
     )
 
     # Schritt 5: Pass 4 – TTS + OGG pro Datei
+    # Alte falsche TTS-Dateien für Geräusch/Copyright-Stems aufräumen
+    if noise_stems and tts_dir.exists():
+        cleaned = 0
+        for f in tts_dir.iterdir():
+            if not f.is_file() or f.suffix not in (".mp3", ".ogg"):
+                continue
+            stem_base = re.sub(r"_v\d+$", "", f.stem)
+            if stem_base in noise_stems:
+                f.unlink()
+                cleaned += 1
+        if cleaned:
+            print(f"  {cleaned} alte TTS-Dateien für {len(noise_stems)} Copyright-Stems gelöscht", flush=True)
+
     print(f"\n── Schritt 5: Pass 4 – TTS / OGG-Konvertierung ──")
 
     failed_tts: list[tuple] = []  # (ogg_file, key, translated, mp3_file, voice, i)
@@ -776,16 +790,21 @@ async def run(gme_path: Path, language: str, voice_override: str | None,
         print(f"  OGGs liegen in: {book_dir / 'media'}")
         print(f"  Weiter mit: python gme_patcher/gme_patch.py 01_input/{gme_path.name} {book_dir}/media/ 06_output/...")
     elif use_patcher:
-        print(f"\n── Schritt 6: GME neu packen via gme_patch.py [ALPHA] ──")
+        print(f"\n── Schritt 6: GME neu packen via gme_patch.py ──")
         sys.path.insert(0, str(BASE_DIR / "gme_patcher"))
         from gme_patch import patch_gme as _patch_gme
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         out_gme = OUTPUT_DIR / f"{book}{cfg['suffix']}_p_{PIPELINE_VERSION}.gme"
-        _patch_gme(gme_path, tts_dir, out_gme)
-        print(f"\n{'='*55}")
-        print(f"  Fertig! Neue GME-Datei (Patcher):")
-        print(f"  {out_gme}")
-        print(f"{'='*55}\n")
+        result = _patch_gme(gme_path, tts_dir, out_gme, force=True)
+        if result["mode"] == "aborted":
+            print("  Abgebrochen – keine GME erzeugt.")
+        else:
+            out_gme = result["output"]
+            label = " (experimentell)" if result["mode"] == "experimental" else ""
+            print(f"\n{'='*55}")
+            print(f"  Fertig! Neue GME-Datei{label}:")
+            print(f"  {out_gme}")
+            print(f"{'='*55}\n")
     else:
         print(f"\n── Schritt 6: GME neu packen ──")
         out_gme = repack_gme(book_dir, OUTPUT_DIR, cfg["suffix"], tts_dir=tts_dir)

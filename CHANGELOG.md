@@ -1,5 +1,17 @@
 # Changelog – pipeline.py / Skripte / Notebooks
 
+## pipeline.py (backup v3.23) – 2026-03-26
+### Copyright/Noise-Reparatur in Pipeline integriert
+- Logik aus `repair_lsw_copyright.py` in pipeline.py eingebaut (Option A)
+- **Schritt 3**: `noise_stems`-Set trackt erkannte Copyright-Stems; leere Übersetzung wird
+  IMMER geschrieben (nicht nur wenn noch keine existiert) → überschreibt alte falsche Übersetzungen
+- **Vor Schritt 5**: Aufräum-Pass löscht alte falsche TTS-Dateien (MP3+OGG) für Copyright-Stems
+- `repair_lsw_copyright.py` entfernt (→ `backup/`)
+### gme_patch.py v4 Integration
+- Schritt 6 (`--use-patcher`): nutzt neues `patch_gme()` API mit `force=True` + Result-Dict
+- Erkennt Safe/Experimentell-Modus, zeigt Label in Ausgabe
+- `[ALPHA]` aus Überschrift entfernt
+
 ## colab_pipeline_v21 + pipeline.py (backup v3.22) – 2026-03-24
 ### Bugfix (cell-9)
 - `k_max < 2` (≤2 Samples): Guard verhindert `max()` auf leerem Dict + IndexError
