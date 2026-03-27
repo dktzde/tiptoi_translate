@@ -949,6 +949,7 @@ async def run(gme_path: Path, language: str, voice_override: str | None,
             lang=sl_lang,
             max_diff=float("inf"),
             speakers_json=speakers_file if speakers_file.exists() else None,
+            transcripts_dir=transcripts_dir if transcripts_dir.exists() else None,
         )
         print(f"\n{'='*55}")
         print(f"  Fertig! Neue GME-Datei (same-length):")
