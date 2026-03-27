@@ -317,6 +317,11 @@ echo ""
 # 5. Zielordner suchen oder anlegen
 # ════════════════════════════════════════════════════════
 VARIANT_LOWER=$(echo "$PEN_VARIANT" | tr '[:upper:]' '[:lower:]')
+# Aliases: vo (Vogtländisch), by (Bayrisch), nd (Plattdeutsch) → alle auf CH-Stift
+case "$VARIANT_LOWER" in
+    ch) SEARCH_VARIANTS=("ch" "vo" "by" "nd") ;;
+    *)  SEARCH_VARIANTS=("$VARIANT_LOWER") ;;
+esac
 TARGET_DIR=$(find "$SCRIPT_DIR" -maxdepth 1 -type d -name "uebertragen_${PEN_ID}_*" | head -1)
 if [ -z "$TARGET_DIR" ]; then
     TARGET_DIR="${SCRIPT_DIR}/uebertragen_${PEN_ID}_${PEN_VARIANT}"
@@ -330,8 +335,14 @@ fi
 # 6. GME-Kandidaten finden
 # ════════════════════════════════════════════════════════
 echo ""
-echo "Suche nach *_${VARIANT_LOWER}_*.gme ..."
-mapfile -t CANDIDATES < <(find "$SCRIPT_DIR" -maxdepth 1 -name "*_${VARIANT_LOWER}_*.gme" -type f | sort)
+echo "Suche nach GME-Dateien für Variante $PEN_VARIANT (${SEARCH_VARIANTS[*]}) ..."
+CANDIDATES=()
+for V in "${SEARCH_VARIANTS[@]}"; do
+    while IFS= read -r f; do
+        CANDIDATES+=("$f")
+    done < <(find "$SCRIPT_DIR" -maxdepth 1 -name "*_${V}_*.gme" -type f | sort)
+done
+mapfile -t CANDIDATES < <(printf '%s\n' "${CANDIDATES[@]}" | sort -u)
 
 if [ "${#CANDIDATES[@]}" -eq 0 ]; then
     echo "Keine passenden GME-Dateien gefunden (Variante: $PEN_VARIANT)."

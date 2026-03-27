@@ -1,5 +1,11 @@
 # Changelog – pipeline.py / Skripte / Notebooks
 
+## gme_uebertragen.sh (backup v1→v2) – 2026-03-27
+### CH-Stift: vo/by/nd als Synonyme
+- `SEARCH_VARIANTS`-Array: bei `PEN_VARIANT=CH` werden zusätzlich `*_vo_*.gme`, `*_by_*.gme`, `*_nd_*.gme` gefunden
+- Suchschleife über alle Varianten, Kandidaten dedupliziert (sort -u)
+- Dialekt-GMEs (Vogtländisch, Bayrisch, Plattdeutsch) landen im selben CH-Unterordner
+
 ## pipeline.py (backup v3.24) – 2026-03-26
 ### Drei neue Dialekt-Sprachen + 8 Stimmen pro Sprache
 - **Vogtländisch** (`--language vo`): magistral-medium-latest, Prompt mit Lautregeln (aa, isch, -la, weiche Konsonanten)
