@@ -17,6 +17,7 @@ Verwendung:
   python pipeline.py 01_input/buch.gme --whisper-model base
   python pipeline.py 01_input/buch.gme --limit 10
   python pipeline.py 01_input/buch.gme --use-patcher   [ALPHA] Schritt 6 via gme_patch.py statt tttool
+  python pipeline.py 01_input/buch.gme --no-fast-tts   Zufällige TTS-Pausen aktivieren (Standard: aus)
 """
 
 import os
@@ -30,6 +31,7 @@ import asyncio
 import subprocess
 import argparse
 import zipfile
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -56,7 +58,7 @@ COLAB_DIR       = BASE_DIR / "07_colab_upload"
 TTTOOL          = "tttool"
 DEFAULT_LANGUAGE = "fr"
 DEFAULT_WHISPER  = "small"
-PIPELINE_VERSION     = "v33"  # wird an alle erzeugten Dateinamen angehängt
+PIPELINE_VERSION     = "v36"  # wird an alle erzeugten Dateinamen angehängt
 NOISE_MIX_MIN_SEC    = 0.5    # Geräuschanteil < dieser Wert → kein Mix, nur TTS
 MIN_RESUME_VERSION   = 29     # v29-Transkripte weiterhin gültig (kein Whisper-Neulauf)
                                # Dateien älter als v{MIN_RESUME_VERSION} werden ignoriert
@@ -64,6 +66,9 @@ MIN_RESUME_VERSION   = 29     # v29-Transkripte weiterhin gültig (kein Whisper-
                                # v32: --use-patcher Flag (ALPHA): Schritt 6 via gme_patch.py
                                # v33: TTS-Resume Fix (OGG bereits vorhanden → überspringen)
                                # v33: --use-patcher-sl Flag: Schritt 6 via gme_patch_same_lenght.py (shift=0)
+                               # v34: --fast-tts Flag (Standard: an) – überspringt zufällige TTS-Pausen
+                               # v35: kompaktere Ausgaben (Schritt 1–5): Counts statt Einzeldatei-Logs
+                               # v36: --use-patcher-sl: sl_lang unterstützt alle 5 Sprachen (fr/ch/vo/by/nd)
 
 # Tiptoi-kompatibles OGG-Format (Mono, 22050 Hz)
 OGG_CHANNELS   = "1"
@@ -367,13 +372,11 @@ def unpack_gme(gme_file: Path) -> Path:
     yaml_out = out_dir / f"{book_name}.yaml"
     if yaml_out.exists():
         yaml_out.unlink()
-    print(f"  tttool export → {yaml_out.name}")
-    subprocess.run([TTTOOL, "export", gme_abs, str(yaml_out)], check=True)
+    subprocess.run([TTTOOL, "export", gme_abs, str(yaml_out)], check=True, capture_output=True)
 
     media_dir = out_dir / "media"
     media_dir.mkdir(exist_ok=True)
-    print(f"  tttool media  → {media_dir}/")
-    subprocess.run([TTTOOL, "media", "-d", str(media_dir), gme_abs], check=True)
+    subprocess.run([TTTOOL, "media", "-d", str(media_dir), gme_abs], check=True, capture_output=True)
 
     return out_dir
 
@@ -508,9 +511,16 @@ def translate_batch(
     temperature: float | None = None,
 ) -> None:
     """Übersetzt pending-Texte in Batches. Bereits vorhandene Dateien werden übersprungen."""
+    already_done = sum(1 for _, f in pending if f.exists())
     todo = [(t, f) for t, f in pending if not f.exists() and t.strip()]
+
     if not todo:
+        if already_done:
+            print(f"  Alle {already_done} bereits übersetzt → übersprungen.", flush=True)
         return
+
+    if already_done:
+        print(f"  {already_done} übersprungen (Resume), {len(todo)} werden übersetzt.", flush=True)
 
     total_batches = (len(todo) + BATCH_SIZE - 1) // BATCH_SIZE
     print(f"  Batch-Übersetzung: {len(todo)} Texte in {total_batches} Batches (à {BATCH_SIZE})", flush=True)
@@ -673,7 +683,8 @@ def mix_with_original(original_ogg: Path, mp3_file: Path, ogg_out: Path,
 async def run(gme_path: Path, language: str, voice_override: str | None,
               whisper_model: str, limit: int = 0, skip_assemble: bool = False,
               offline: bool = False, use_patcher: bool = False,
-              use_patcher_sl: bool = False, min_k: int = 4):
+              use_patcher_sl: bool = False, min_k: int = 4,
+              fast_tts: bool = True):
     if not gme_path.exists():
         print(f"Fehler: Datei nicht gefunden: {gme_path}")
         sys.exit(1)
@@ -717,11 +728,15 @@ async def run(gme_path: Path, language: str, voice_override: str | None,
     print("── Schritt 1: GME entpacken ──")
     book_dir  = unpack_gme(gme_path)
     media_dir = book_dir / "media"
-    ogg_files = sorted(media_dir.rglob("*.ogg"))
+    all_oggs  = sorted(media_dir.rglob("*.ogg"))
+    total_all = len(all_oggs)
     if limit:
-        ogg_files = ogg_files[:limit]
+        ogg_files = all_oggs[:limit]
+    else:
+        ogg_files = all_oggs
     total = len(ogg_files)
-    print(f"  {total} OGG-Dateien werden verarbeitet.\n")
+    limit_note = f" (Testmodus: {limit} von {total_all})" if limit else ""
+    print(f"  {total_all} OGG-Dateien entpackt{limit_note}.\n")
 
     if not ogg_files:
         print("Keine OGG-Dateien gefunden – abgebrochen.")
@@ -788,7 +803,7 @@ async def run(gme_path: Path, language: str, voice_override: str | None,
     else:
         existing = load_speakers(speakers_file)
         if existing is not None:
-            print(f"── Schritt 2: Sprecher-Profil geladen (speakers.json) ──\n")
+            print(f"── Schritt 2: Sprecher-Profil vorhanden → übersprungen (speakers.json) ──\n")
             voice_map = existing
         elif offline:
             print(f"── Schritt 2: Sprecher-Analyse lokal ({total} Dateien, resemblyzer) ──")
@@ -809,9 +824,12 @@ async def run(gme_path: Path, language: str, voice_override: str | None,
     print(f"── Schritt 3: Whisper-Modell laden ({whisper_model}) ──")
     whisper = WhisperModel(whisper_model, device="cpu", compute_type="int8", cpu_threads=2, num_workers=1)
 
-    print(f"\n── Schritt 3: Pass 2 – Transkription ({total} Dateien) ──")
+    print(f"\n── Schritt 3: Transkription ({total} Dateien) ──")
     pending_translation: list[tuple[str, Path]] = []   # (text, translation_file)
     noise_stems: set[str] = set()  # Geräusch-/Copyright-Stems → Original-OGG beibehalten
+    resume_transcribed = 0
+    new_transcribed    = 0
+    noise_count        = 0
 
     for i, ogg_file in enumerate(ogg_files, 1):
         key          = ogg_file.stem
@@ -820,14 +838,20 @@ async def run(gme_path: Path, language: str, voice_override: str | None,
         transcript_f  = _find_resume(transcripts_dir, key, ".txt") or new_transcript_f
         translation_f = _find_resume(translated_dir,  key, ".txt") or new_translation_f
 
-        if i % 100 == 0 or i == total:
+        is_resume = transcript_f.exists()
+        if new_transcribed > 0 and (i % 100 == 0 or i == total):
             print(f"  Whisper: {i}/{total}", flush=True)
 
         text = transcribe_one(ogg_file, whisper, transcript_f)
+        if is_resume:
+            resume_transcribed += 1
+        else:
+            new_transcribed += 1
+
         if not text.strip() or _is_noise_transcript(text):
             if _is_noise_transcript(text):
                 noise_stems.add(key)
-                print(f"  ⚠ Geräusch/Copyright übersprungen: {ogg_file.name} ({text.strip()!r})", flush=True)
+                noise_count += 1
             new_translation_f.write_text("", encoding="utf-8")
             continue
 
@@ -836,7 +860,20 @@ async def run(gme_path: Path, language: str, voice_override: str | None,
     # Whisper-Modell aus RAM freigeben bevor Mistral startet
     del whisper
     gc.collect()
-    print("  Whisper-Modell aus RAM entladen.", flush=True)
+
+    # Schritt-3-Summary
+    if resume_transcribed == total:
+        print(f"  Alle {total} übersprungen (Resume).", flush=True)
+    else:
+        _parts = []
+        if new_transcribed:
+            _parts.append(f"{new_transcribed} neu transkribiert")
+        if resume_transcribed:
+            _parts.append(f"{resume_transcribed} übersprungen (Resume)")
+        if noise_count:
+            _parts.append(f"{noise_count} Geräusch/Copyright ignoriert")
+        print(f"  {', '.join(_parts)}.", flush=True)
+    print(f"  Whisper-Modell aus RAM entladen.", flush=True)
 
     # Schritt 4: Pass 3 – Batch-Übersetzung (Mistral)
     api_key = os.getenv("MISTRAL_API_KEY")
@@ -864,13 +901,23 @@ async def run(gme_path: Path, language: str, voice_override: str | None,
         if cleaned:
             print(f"  {cleaned} alte TTS-Dateien für {len(noise_stems)} Copyright-Stems gelöscht", flush=True)
 
-    print(f"\n── Schritt 5: Pass 4 – TTS / OGG-Konvertierung ──")
+    def _short_voice(v: str) -> str:
+        name = v.split('-', 2)[2]
+        return name.replace('MultilingualNeural', '').replace('Neural', '')
+
+    voice_dist    = Counter(_short_voice(voice_for(f.stem)) for f in ogg_files)
+    voice_summary = ', '.join(f"{v}: {n}" for v, n in voice_dist.most_common())
+    pause_mode    = "ohne Pausen" if fast_tts else "mit Pausen (--no-fast-tts)"
+
+    print(f"\n── Schritt 5: TTS / OGG-Konvertierung ──")
+    print(f"  Modus: {pause_mode}")
+    print(f"  Stimmen: {voice_summary}")
 
     failed_tts: list[tuple] = []  # (ogg_file, key, translated, mp3_file, voice, i)
 
     async def _process_tts(ogg_file, key, translated, mp3_file, voice, ogg_out, i, is_retry=False):
-        label = " [RETRY]" if is_retry else ""
-        print(f"  [{i}/{total}]{label} {ogg_file.name}  [{voice.split('-')[2]}]", flush=True)
+        if is_retry:
+            print(f"  [RETRY {i}/{total}] {ogg_file.name}", flush=True)
         if not await tts_one(translated, mp3_file, voice):
             return False
         if mp3_file.exists() and mp3_file.stat().st_size == 0:
@@ -895,6 +942,7 @@ async def run(gme_path: Path, language: str, voice_override: str | None,
         return True
 
     tts_skipped = 0
+    tts_done    = 0
     for i, ogg_file in enumerate(ogg_files, 1):
         key           = ogg_file.stem
         translation_f = _find_resume(translated_dir, key, ".txt") or (translated_dir / f"{key}_{PIPELINE_VERSION}.txt")
@@ -905,28 +953,39 @@ async def run(gme_path: Path, language: str, voice_override: str | None,
         # Resume: OGG existiert bereits → TTS + Konvertierung überspringen
         if ogg_out.exists() and ogg_out.stat().st_size > 0:
             tts_skipped += 1
-            continue
+        else:
+            if not translation_f.exists():
+                pass
+            else:
+                translated_text = _clean_translation(translation_f.read_text(encoding="utf-8"))
+                if translated_text:
+                    ok = await _process_tts(ogg_file, key, translated_text, mp3_file, voice, ogg_out, i)
+                    if ok:
+                        tts_done += 1
+                    elif not mp3_file.exists():
+                        failed_tts.append((ogg_file, key, translated_text, mp3_file, voice, ogg_out, i))
 
-        if not translation_f.exists():
-            continue
-        translated = _clean_translation(translation_f.read_text(encoding="utf-8"))
-        if not translated:
-            continue
+                    if not fast_tts:
+                        await asyncio.sleep(random.uniform(1.5, 3.0))
 
-        ok = await _process_tts(ogg_file, key, translated, mp3_file, voice, ogg_out, i)
-        if not ok and not mp3_file.exists():
-            failed_tts.append((ogg_file, key, translated, mp3_file, voice, ogg_out, i))
+        if i % 100 == 0 or i == total:
+            print(f"  TTS: {i}/{total} · {tts_done} neu · {tts_skipped} übersprungen | {voice_summary}", flush=True)
 
-        await asyncio.sleep(random.uniform(1.5, 3.0))
-
-    if tts_skipped:
-        print(f"  Resume: {tts_skipped} OGGs bereits vorhanden → übersprungen", flush=True)
+    # Schritt-5-Summary
+    failed_note = f", {len(failed_tts)} fehlgeschlagen" if failed_tts else ""
+    if tts_skipped == total:
+        print(f"  Alle {total} übersprungen (Resume).", flush=True)
+    elif tts_skipped > 0:
+        print(f"  {tts_done} erzeugt, {tts_skipped} übersprungen (Resume){failed_note}.", flush=True)
+    else:
+        print(f"  {tts_done} erzeugt{failed_note}.", flush=True)
 
     # Retry-Durchlauf für fehlgeschlagene TTS-Dateien
     if failed_tts:
         print(f"\n── Schritt 5b: TTS-Retry für {len(failed_tts)} fehlgeschlagene Datei(en) ──")
         for ogg_file, key, translated, mp3_file, voice, ogg_out, i in failed_tts:
-            await asyncio.sleep(random.uniform(5.0, 10.0))
+            if not fast_tts:
+                await asyncio.sleep(random.uniform(5.0, 10.0))
             await _process_tts(ogg_file, key, translated, mp3_file, voice, ogg_out, i, is_retry=True)
 
     # Schritt 6: GME neu packen
@@ -940,9 +999,9 @@ async def run(gme_path: Path, language: str, voice_override: str | None,
         from gme_patch_same_lenght import patch_gme as _patch_gme_sl
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         out_gme = OUTPUT_DIR / f"{book}{cfg['suffix']}_sl_{PIPELINE_VERSION}.gme"
-        # max_diff=inf: niemals interaktive Nachbesserung – immer auto-kürzen (ffmpeg)
-        # lang auf 'fr' mappen wenn unbekannt (Stimmen-Fallback im Patcher)
-        sl_lang = language if language in ("fr", "ch") else "fr"
+        # max_diff=inf: niemals interaktives Menü → Retranslation (Mistral) → Truncate
+        # Alle 5 LANG_CONFIG-Sprachen erlaubt; Fallback auf 'fr' wenn unbekannt
+        sl_lang = language if language in LANG_CONFIG else "fr"
         _patch_gme_sl(
             gme_path, tts_dir, out_gme,
             voice=cfg["voices"][0],
@@ -1034,8 +1093,15 @@ def main():
         metavar="K",
         help="Minimale Sprecher-Anzahl für Clustering (Standard: 4); wird in colab_config.py geschrieben",
     )
+    parser.add_argument(
+        "--fast-tts",
+        dest="fast_tts",
+        default=True,
+        action=argparse.BooleanOptionalAction,
+        help="Zufällige Pausen zwischen TTS-Anfragen überspringen (Standard: an). --no-fast-tts aktiviert die Pausen.",
+    )
     args = parser.parse_args()
-    asyncio.run(run(Path(args.gme), args.language, args.voice, args.whisper_model, args.limit, args.skip_assemble, args.offline, args.use_patcher, args.use_patcher_sl, args.min_k))
+    asyncio.run(run(Path(args.gme), args.language, args.voice, args.whisper_model, args.limit, args.skip_assemble, args.offline, args.use_patcher, args.use_patcher_sl, args.min_k, args.fast_tts))
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 """
-gme_patch_same_lenght.py v6 – GME Audio-Patcher (Binary-Patch, shift=0)
+gme_patch_same_lenght.py v9 – GME Audio-Patcher (Binary-Patch, shift=0)
 =========================================================================
 Ersetzt Audio in GME direkt im Binary. Jedes Ersatz-Audio wird auf exakt
 die Originalgröße gebracht (Padding oder Kompression). shift ist immer 0,
@@ -32,6 +32,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -58,6 +59,15 @@ LANG_CONFIG: dict[str, dict] = {
             "Garde les mots les plus importants, utilise un langage simple pour enfants. "
             "Réponds uniquement avec la traduction, sans explications."
         ),
+        "batch_prompt": (
+            "Tu es un traducteur pour livres enfants (Tiptoi). "
+            "Tu reçois des textes allemands numérotés avec un objectif de caractères entre parenthèses. "
+            "Traduis et raccourcis chaque texte EN FRANÇAIS selon l'objectif indiqué. "
+            "Utilise un langage simple et naturel pour enfants. "
+            "RÉPONDS UNIQUEMENT avec les traductions numérotées, format exact:\n"
+            "[1] traduction\n[2] traduction\n"
+            "Aucune explication, aucun commentaire."
+        ),
     },
     "ch": {
         "voices": [
@@ -78,6 +88,15 @@ LANG_CONFIG: dict[str, dict] = {
             "Verwende einfache, kindgerechte Wörter. "
             "Antworte nur mit der Übersetzung, ohne Erklärungen."
         ),
+        "batch_prompt": (
+            "Du bist ein Übersetzer für Kinderbücher (Tiptoi). "
+            "Du erhältst nummerierte deutsche Texte mit Zeichenziel-Vorgaben in Klammern. "
+            "Übersetze und kürze jeden Text INS SCHWEIZERDEUTSCHE (Berner Dialekt) gemäß dem Zeichenziel. "
+            "Verwende einfache, kindgerechte Sprache. "
+            "ANTWORTE NUR mit den nummerierten Übersetzungen, exaktes Format:\n"
+            "[1] Übersetzung\n[2] Übersetzung\n"
+            "Keine Erklärungen, keine Kommentare."
+        ),
     },
     "vo": {
         "voices": [
@@ -96,6 +115,15 @@ LANG_CONFIG: dict[str, dict] = {
             "Übersetze den folgenden deutschen Text ins Vogtländische UND kürze ihn "
             "auf ungefähr {target_chars} Zeichen. Verwende einfache, kindgerechte Sprache. "
             "Antworte NUR mit der Übersetzung, ohne Erklärungen."
+        ),
+        "batch_prompt": (
+            "Du bist ein Übersetzer für Kinderbücher (Tiptoi). "
+            "Du erhältst nummerierte deutsche Texte mit Zeichenziel-Vorgaben in Klammern. "
+            "Übersetze und kürze jeden Text INS VOGTLÄNDISCHE gemäß dem Zeichenziel. "
+            "Verwende einfache, kindgerechte Sprache. "
+            "ANTWORTE NUR mit den nummerierten Übersetzungen, exaktes Format:\n"
+            "[1] Übersetzung\n[2] Übersetzung\n"
+            "Keine Erklärungen, keine Kommentare."
         ),
     },
     "by": {
@@ -116,6 +144,15 @@ LANG_CONFIG: dict[str, dict] = {
             "ihn auf ungefähr {target_chars} Zeichen. Verwende einfache, kindgerechte Sprache. "
             "Antworte NUR mit der Übersetzung, ohne Erklärungen."
         ),
+        "batch_prompt": (
+            "Du bist ein Übersetzer für Kinderbücher (Tiptoi). "
+            "Du erhältst nummerierte deutsche Texte mit Zeichenziel-Vorgaben in Klammern. "
+            "Übersetze und kürze jeden Text INS BAIRISCHE (Oberbairisch) gemäß dem Zeichenziel. "
+            "Verwende einfache, kindgerechte Sprache. "
+            "ANTWORTE NUR mit den nummerierten Übersetzungen, exaktes Format:\n"
+            "[1] Übersetzung\n[2] Übersetzung\n"
+            "Keine Erklärungen, keine Kommentare."
+        ),
     },
     "nd": {
         "voices": [
@@ -134,6 +171,15 @@ LANG_CONFIG: dict[str, dict] = {
             "Übersetze den folgenden deutschen Text ins Plattdeutsche (Niederdeutsch) UND "
             "kürze ihn auf ungefähr {target_chars} Zeichen. Verwende einfache, kindgerechte Sprache. "
             "Antworte NUR mit der Übersetzung, ohne Erklärungen."
+        ),
+        "batch_prompt": (
+            "Du bist ein Übersetzer für Kinderbücher (Tiptoi). "
+            "Du erhältst nummerierte deutsche Texte mit Zeichenziel-Vorgaben in Klammern. "
+            "Übersetze und kürze jeden Text INS PLATTDEUTSCHE (Niederdeutsch) gemäß dem Zeichenziel. "
+            "Verwende einfache, kindgerechte Sprache. "
+            "ANTWORTE NUR mit den nummerierten Übersetzungen, exaktes Format:\n"
+            "[1] Übersetzung\n[2] Übersetzung\n"
+            "Keine Erklärungen, keine Kommentare."
         ),
     },
 }
@@ -200,16 +246,25 @@ def _shrink_ogg(raw: bytes, max_bytes: int) -> bytes | None:
     return None
 
 
-def _reencode_lower_quality(raw: bytes, max_bytes: int) -> bytes | None:
+def _reencode_lower_quality(raw: bytes, max_bytes: int) -> tuple[bytes | None, bytes | None]:
     """Recodiert OGG mit schrittweise sinkender Qualität (q=3 → -1).
 
     Gleiche Dauer, kein Inhaltsverlust – nur geringere Bitrate.
-    Gibt None zurück wenn auch q=-1 nicht reicht.
+
+    Returns:
+        (fitted, min_quality)
+        - fitted:      erstes Ergebnis ≤ max_bytes (mit Padding), oder None
+        - min_quality: kleinstes erreichtes Ergebnis (q=-1, ohne Padding), oder None
+                       Kann größer als max_bytes sein → als Basis für atempo nutzbar.
     """
+    fitted = None
+    min_quality = None
     with tempfile.TemporaryDirectory() as tmp:
         in_path = os.path.join(tmp, "in.ogg")
         out_path = os.path.join(tmp, "out.ogg")
         Path(in_path).write_bytes(raw)
+
+        # Phase 1: Vorbis-Qualitätsstufen q=3 → -1 (~45 kbps minimum)
         for q in [3, 2, 1, 0, -1]:
             try:
                 subprocess.run(
@@ -218,11 +273,30 @@ def _reencode_lower_quality(raw: bytes, max_bytes: int) -> bytes | None:
                      "-q:a", str(q), out_path],
                     capture_output=True, timeout=30)
                 result = Path(out_path).read_bytes()
-                if len(result) <= max_bytes:
-                    return result + b'\x00' * (max_bytes - len(result))
+                if q == -1:
+                    min_quality = result
+                if fitted is None and len(result) <= max_bytes:
+                    fitted = result + b'\x00' * (max_bytes - len(result))
             except Exception:
                 continue
-    return None
+
+        # Phase 2: Explizite niedrige Bitraten (unter q=-1, bis ~8 kbps)
+        # Vorbis bei 8k: ~5× kleiner als q=-1, Sprachverständlichkeit bleibt gut
+        for bitrate in ["24k", "16k", "12k", "8k"]:
+            try:
+                subprocess.run(
+                    ["ffmpeg", "-y", "-i", in_path,
+                     "-c:a", "libvorbis", "-ac", "1", "-ar", "22050",
+                     "-b:a", bitrate, out_path],
+                    capture_output=True, timeout=30)
+                result = Path(out_path).read_bytes()
+                min_quality = result  # letzte Stufe ist kleinste
+                if fitted is None and len(result) <= max_bytes:
+                    fitted = result + b'\x00' * (max_bytes - len(result))
+            except Exception:
+                continue
+
+    return fitted, min_quality
 
 
 def _truncate_ogg_inline(raw: bytes, max_bytes: int) -> bytes:
@@ -266,6 +340,28 @@ def _find_transcript(stem: str, transcripts_dir: Path) -> str | None:
     return None
 
 
+# ─── Mistral Response Parsing ────────────────────────────────────────────────
+
+def _extract_text(content) -> str:
+    """Extrahiert Text aus Mistral-Antwort.
+    magistral-medium-latest (Reasoning) gibt content als Liste von Blöcken zurück,
+    Standard-Modelle als String.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            btype = getattr(block, "type", None) or (block.get("type") if isinstance(block, dict) else None)
+            if btype == "thinking":
+                continue
+            text = getattr(block, "text", None) or (block.get("text", "") if isinstance(block, dict) else "")
+            if text:
+                parts.append(text)
+        return "".join(parts)
+    return str(content)
+
+
 # ─── Mistral Kürzen+Übersetzen ────────────────────────────────────────────────
 
 def _shorten_translate_mistral(de_text: str, target_chars: int,
@@ -288,7 +384,7 @@ def _shorten_translate_mistral(de_text: str, target_chars: int,
         system_msg = prompt_tpl.format(target_chars=target_chars)
 
         client = Mistral(api_key=api_key)
-        resp = client.chat.complete(
+        kwargs = dict(
             model=cfg["model"],
             messages=[
                 {"role": "system", "content": system_msg},
@@ -297,7 +393,20 @@ def _shorten_translate_mistral(de_text: str, target_chars: int,
             temperature=cfg.get("temperature", 0.5),
             max_tokens=256,
         )
-        return resp.choices[0].message.content.strip()
+        waits = [60, 90, 180]
+        for attempt in range(len(waits) + 1):
+            try:
+                resp = client.chat.complete(**kwargs)
+                time.sleep(0.5)  # Rate-Limit schonen
+                return _extract_text(resp.choices[0].message.content).strip()
+            except Exception as e:
+                if ("429" in str(e) or "rate" in str(e).lower()) and attempt < len(waits):
+                    print(f"    ⚠ Rate Limit – warte {waits[attempt]}s...", flush=True)
+                    time.sleep(waits[attempt])
+                else:
+                    print(f"    ⚠ Mistral Fehler: {e}")
+                    return None
+        return None
     except Exception as e:
         print(f"    ⚠ Mistral Fehler: {e}")
         return None
@@ -323,7 +432,16 @@ def _tts_to_ogg(text: str, voice: str, max_bytes: int) -> bytes | None:
                     capture_output=True, timeout=30)
                 return Path(ogg_path).read_bytes()
 
-        raw = asyncio.run(_run())
+        # asyncio.run() schlägt fehl wenn bereits eine Event Loop läuft (z.B. pipeline.py).
+        # In diesem Fall: ThreadPoolExecutor → neuer Thread mit eigener Event Loop.
+        try:
+            asyncio.get_running_loop()
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                raw = pool.submit(asyncio.run, _run()).result()
+        except RuntimeError:
+            raw = asyncio.run(_run())
+
         if len(raw) <= max_bytes:
             return raw + b'\x00' * (max_bytes - len(raw))
         return raw  # caller handles oversized
@@ -353,6 +471,121 @@ def _retranslate(de_text: str, new_len: int, max_bytes: int,
     print(f"    Edge-TTS ({voice})...")
     result = _tts_to_ogg(short_text, voice, max_bytes)
     return result
+
+
+# ─── Batch-Retranslation ─────────────────────────────────────────────────────
+
+def _batch_retranslate_mistral(
+    entries: list[dict],
+    lang: str,
+    batch_size: int = 20,
+    max_chars_per_batch: int = 1000,
+) -> dict[int, str | None]:
+    """Batch-Übersetzung via Mistral: max 20 Einträge ODER 1000 Zeichen pro Aufruf.
+
+    entries: [{'idx': int, 'de_text': str, 'orig_len': int, 'new_len': int}, ...]
+    Returns: {idx: fr_text | None}
+    """
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass
+
+    api_key = os.environ.get("MISTRAL_API_KEY")
+    if not api_key:
+        print("  ⚠ Kein MISTRAL_API_KEY – Batch-Retranslation übersprungen")
+        return {}
+
+    cfg = LANG_CONFIG.get(lang, LANG_CONFIG["fr"])
+    system_msg = cfg.get("batch_prompt", cfg["shorten_prompt"].replace(" {target_chars} Zeichen", ""))
+
+    results: dict[int, str | None] = {}
+
+    # Batches bilden: max batch_size Einträge ODER max_chars_per_batch Zeichen
+    batches: list[list[dict]] = []
+    cur: list[dict] = []
+    cur_chars = 0
+    for entry in entries:
+        if not entry.get("de_text"):
+            results[entry["idx"]] = None
+            continue
+        tlen = len(entry["de_text"])
+        if cur and (len(cur) >= batch_size or cur_chars + tlen > max_chars_per_batch):
+            batches.append(cur)
+            cur, cur_chars = [], 0
+        cur.append(entry)
+        cur_chars += tlen
+    if cur:
+        batches.append(cur)
+
+    if not batches:
+        return results
+
+    try:
+        from mistralai import Mistral
+        client = Mistral(api_key=api_key)
+    except Exception as e:
+        print(f"  ⚠ Mistral Import-Fehler: {e}")
+        return results
+
+    for batch_num, batch in enumerate(batches, 1):
+        total_chars = sum(len(e["de_text"]) for e in batch)
+        print(f"\n  ═══ Batch {batch_num}/{len(batches)}: {len(batch)} Einträge, ~{total_chars} Zeichen ═══",
+              flush=True)
+
+        # User-Nachricht mit nummerierten Einträgen + Zeichenziel
+        lines = []
+        for n, entry in enumerate(batch, 1):
+            target_pct = min(0.90, max(0.65, (entry["orig_len"] / entry["new_len"]) * 4.0))
+            target_chars = max(10, int(len(entry["de_text"]) * target_pct))
+            lines.append(f"[{n}] (Ziel: ~{target_chars} Zeichen) {entry['de_text']}")
+        user_msg = "\n".join(lines)
+
+        print(f"\n--- Mistral System ---\n{system_msg}")
+        print(f"\n--- Mistral User ---\n{user_msg}", flush=True)
+
+        kwargs = dict(
+            model=cfg["model"],
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user",   "content": user_msg},
+            ],
+            temperature=cfg.get("temperature", 0.5),
+            max_tokens=min(1024, total_chars * 3),
+        )
+
+        response_text = None
+        waits = [60, 90, 180]
+        for attempt in range(len(waits) + 1):
+            try:
+                resp = client.chat.complete(**kwargs)
+                time.sleep(0.5)
+                response_text = _extract_text(resp.choices[0].message.content).strip()
+                break
+            except Exception as e:
+                if ("429" in str(e) or "rate" in str(e).lower()) and attempt < len(waits):
+                    print(f"  ⚠ Rate Limit – warte {waits[attempt]}s...", flush=True)
+                    time.sleep(waits[attempt])
+                else:
+                    print(f"  ⚠ Mistral Fehler (Batch {batch_num}): {e}")
+                    break
+
+        if response_text:
+            print(f"\n--- Mistral Response ---\n{response_text}", flush=True)
+            for line in response_text.split("\n"):
+                m = re.match(r'^\[(\d+)\]\s*(.+)$', line.strip())
+                if m:
+                    n = int(m.group(1))
+                    text = m.group(2).strip()
+                    if 1 <= n <= len(batch):
+                        results[batch[n - 1]["idx"]] = text
+        else:
+            print(f"  ⚠ Batch {batch_num}: kein Ergebnis")
+            for entry in batch:
+                results[entry["idx"]] = None
+
+    return results
 
 
 # ─── Interaktives Menü ────────────────────────────────────────────────────────
@@ -527,7 +760,8 @@ def patch_gme(original_gme: Path, media_dir: Path, output_gme: Path,
         transcripts_dir = None
 
     diff_display = f"{max_diff:.0%}" if max_diff < float('inf') else "nie"
-    print(f"Max-Diff:    {diff_display} (darüber → interaktives Menü)")
+    mode_hint = "Pipeline: Retranslation → Truncate" if max_diff == float('inf') else "darüber → interaktives Menü"
+    print(f"Max-Diff:    {diff_display} ({mode_hint})")
 
     offset_to_canonical: dict[int, int] = {}
     for i, (off, _) in enumerate(entries):
@@ -539,6 +773,7 @@ def patch_gme(original_gme: Path, media_dir: Path, output_gme: Path,
     kept = 0
     resized = 0
     log_entries: list[dict] = []
+    pending_retranslate: list[dict] = []  # Einträge für Batch-Retranslation
 
     canonical_audio: dict[int, bytes] = {}
 
@@ -559,23 +794,46 @@ def patch_gme(original_gme: Path, media_dir: Path, output_gme: Path,
                 print(f"  idx={i}: {over:+,} B ({over_pct:.0%}) [{file_voice.split('-')[2]}]",
                       flush=True)
 
-                # Schritt 1: atempo (immer zuerst, falls ≤ 2x)
-                shrunk = _shrink_ogg(raw, orig_len)
-                if shrunk:
-                    raw = shrunk
-                    method = "atempo"
-                    print(f"    ✓ atempo → {len(raw):,} B", flush=True)
+                # Schritt 1: Qualitätsreduktion (gleiche Dauer, kein Speedup)
+                quality_fitted, quality_min = _reencode_lower_quality(raw, orig_len)
+                if quality_fitted:
+                    raw = quality_fitted
+                    method = "quality"
+                    print(f"    ✓ quality → {len(raw):,} B", flush=True)
                 else:
-                    # Schritt 2: Qualitätsreduktion (gleiche Dauer, geringere Bitrate)
-                    reenc = _reencode_lower_quality(raw, orig_len)
-                    if reenc:
-                        raw = reenc
-                        method = "quality"
-                        print(f"    ✓ quality-reduction → {len(raw):,} B", flush=True)
+                    # Schritt 2: atempo – auf minimaler Qualitätsbasis wenn möglich
+                    # (kleinere Eingabe → atempo bewältigt auch >2x-Fälle)
+                    atempo_input = (quality_min
+                                    if quality_min and len(quality_min) < len(raw)
+                                    else raw)
+                    shrunk = _shrink_ogg(atempo_input, orig_len)
+                    if shrunk:
+                        raw = shrunk
+                        method = "quality+atempo" if atempo_input is quality_min else "atempo"
+                        print(f"    ✓ {method} → {len(raw):,} B", flush=True)
 
-                if method not in ("atempo", "quality"):
-                    # Weder atempo noch quality hat geholfen
-                    if over_pct > max_diff:
+                if method not in ("atempo", "quality", "quality+atempo"):
+                    # quality, quality+atempo und atempo haben alle nicht geholfen
+                    if max_diff == float('inf'):
+                        # Pipeline-Modus: für Batch-Retranslation vormerken
+                        de_text = None
+                        if transcripts_dir:
+                            de_text = _find_transcript(file_stem, transcripts_dir)
+
+                        if de_text:
+                            log_idx = len(log_entries)  # Index des noch anzuhängenden Eintrags
+                            pending_retranslate.append({
+                                "idx": i, "canonical": canonical,
+                                "de_text": de_text, "orig_len": orig_len,
+                                "voice": file_voice, "new_len": len(raw),
+                                "log_idx": log_idx,
+                            })
+                            print(f"    → vorgemerkt für Batch (#{len(pending_retranslate)})", flush=True)
+                        else:
+                            print(f"    → kein Transkript → Dauer-Reduktion", flush=True)
+                        raw = _truncate_ogg_inline(raw, orig_len)
+                        method = "truncated"  # Platzhalter, wird nach Batch ggf. ersetzt
+                    elif over_pct > max_diff:
                         # Über Schwelle → interaktives Menü
                         de_text = None
                         if transcripts_dir:
@@ -616,6 +874,54 @@ def patch_gme(original_gme: Path, media_dir: Path, output_gme: Path,
             })
 
     print(f"Ersetzt: {replaced} | Behalten: {kept} | Größenanpassung: {resized}")
+
+    # ── Batch-Retranslation (Pipeline-Modus) ──────────────────────────────────
+    if pending_retranslate:
+        print(f"\n  Batch-Retranslation: {len(pending_retranslate)} Einträge...", flush=True)
+        translations = _batch_retranslate_mistral(pending_retranslate, lang)
+
+        retranslated_ok = 0
+        for item in pending_retranslate:
+            fr_text = translations.get(item["idx"])
+            if not fr_text:
+                log_entries[item["log_idx"]]["mistral_response"] = None
+                continue
+
+            log_entries[item["log_idx"]]["mistral_response"] = fr_text
+            print(f"\n  idx={item['idx']}: TTS \"{fr_text[:50]}{'...' if len(fr_text) > 50 else ''}\"",
+                  flush=True)
+            new_raw = _tts_to_ogg(fr_text, item["voice"], item["orig_len"])
+            if not new_raw:
+                print(f"  ⚠ TTS fehlgeschlagen → bleibt truncated")
+                continue
+
+            # quality → quality+atempo → truncated
+            quality_fitted, quality_min = _reencode_lower_quality(new_raw, item["orig_len"])
+            if quality_fitted:
+                new_bytes = quality_fitted
+                new_method = "retranslated+quality"
+            else:
+                atempo_input = (quality_min if quality_min and len(quality_min) < len(new_raw)
+                                else new_raw)
+                shrunk = _shrink_ogg(atempo_input, item["orig_len"])
+                if shrunk:
+                    new_bytes = shrunk
+                    new_method = "retranslated+quality+atempo"
+                else:
+                    new_bytes = _truncate_ogg_inline(new_raw, item["orig_len"])
+                    new_method = "retranslated+truncated"
+
+            if len(new_bytes) < item["orig_len"]:
+                new_bytes = new_bytes + b'\x00' * (item["orig_len"] - len(new_bytes))
+            if len(new_bytes) > item["orig_len"]:
+                new_bytes = new_bytes[:item["orig_len"]]
+
+            canonical_audio[item["canonical"]] = new_bytes
+            log_entries[item["log_idx"]]["method"] = new_method
+            retranslated_ok += 1
+            print(f"  ✓ {new_method} → {len(new_bytes):,} B", flush=True)
+
+        print(f"\n  Batch fertig: {retranslated_ok}/{len(pending_retranslate)} erfolgreich", flush=True)
 
     # ── Neue GME zusammenbauen ──
     result = bytearray(data[:first_audio_offset])
@@ -714,6 +1020,10 @@ def _write_log(output_gme: Path, input_gme: Path, lang: str, default_voice: str,
             f"{e['idx']:>5}  {e['method']:<22}  {e['orig_bytes']:>8,}  "
             f"{e['new_bytes']:>8,}  {e['voice']:<35}  {e['stem']}"
         )
+        if e.get("mistral_response"):
+            lines.append(f"       → Mistral: \"{e['mistral_response'][:100]}\"")
+        elif "mistral_response" in e and e["mistral_response"] is None:
+            lines.append(f"       → Mistral: (fehlgeschlagen)")
     lines += [
         "",
         "Methoden-Zusammenfassung:",
@@ -764,7 +1074,7 @@ if __name__ == "__main__":
         sys.exit(0)
 
     parser = argparse.ArgumentParser(
-        description="GME Audio-Patcher v5 – Binary-Patch, shift=0",
+        description="GME Audio-Patcher v9 – Binary-Patch, shift=0",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Beispiele:\n"

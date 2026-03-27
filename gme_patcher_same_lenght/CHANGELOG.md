@@ -1,5 +1,66 @@
 # Changelog – gme_patch_same_lenght.py
 
+## v9 – 2026-03-27
+
+### Batch-Retranslation + erweiterte OGG-Kompression
+- **Batch-Retranslation:** `_batch_retranslate_mistral()` sammelt alle Oversized-Einträge und
+  schickt sie in Gruppen (max 20 ODER 1000 Zeichen) an Mistral → drastisch weniger Rate-Limits
+  (z.B. ~5 API-Calls statt 108)
+- **Zwei-Phasen in `patch_gme`:** Phase 1 quality+atempo → sammle Failures → Batch-Mistral →
+  Phase 2 quality+atempo auf retranslatierten TTS → truncate als letzter Ausweg
+- **Zeichenziel-Formel geändert:** `min(0.90, max(0.65, (orig_len/new_len)×4))` statt starr 85%
+  → Ziel jetzt immer 65–90% des DE-Textes (realistisch erreichbar, ≠ früheres ambitioniertes 28%)
+- **Bugfix:** `if method not in ("atempo", "quality")` fehlte `"quality+atempo"` → Retranslation
+  wurde fälschlich auch nach erfolgreichem quality+atempo gestartet
+- **Erweiterte Qualitätsreduktion:** Nach q=-1 folgen nun explizite Bitraten 24k→16k→12k→8k
+  (Vorbis, 22050 Hz mono). Bei 8 kbps ~5× kleiner als q=-1 → viele Fälle werden ohne Mistral lösbar
+- **Log + Terminal:** Mistral-Prompt (System+User) und Response bei jedem Batch angezeigt;
+  im Log: `→ Mistral: "..."` Zeile unter betroffenen Einträgen
+- **`batch_prompt`** in LANG_CONFIG für alle 5 Sprachen (fr/ch/vo/by/nd)
+- Backup: `backup/gme_patch_same_lenght_v8.py`
+
+---
+
+## v8 – 2026-03-27
+
+### Qualitätsreduktion als Schritt 1 (vor atempo) + Kombination quality+atempo
+- **Neue Reihenfolge:** quality → quality+atempo → atempo → Retranslation → Truncate
+- **Warum:** Qualitätsreduktion bei 22050 Hz mono reduziert Dateigröße um ~60% ohne Speedup.
+  Als Basis für atempo ermöglicht die Kombination Dateien bis ~4× Originalgröße zu retten.
+  Vorher: atempo allein scheiterte ab >2×.
+- **`_reencode_lower_quality` gibt jetzt `(fitted, min_quality)` zurück:**
+  - `fitted`: erstes Ergebnis ≤ max_bytes (mit Padding) oder None
+  - `min_quality`: Ergebnis bei q=-1 (ohne Padding, kann zu groß sein) als Basis für atempo
+- **Neue Log-Methode:** `quality+atempo` (Qualitätsreduktion + Beschleunigung kombiniert)
+- **Bugfix:** `_tts_to_ogg`: `asyncio.run()` schlug fehl wenn pipeline.py bereits eine Event Loop
+  betrieb → `asyncio.get_running_loop()` + `ThreadPoolExecutor` als Workaround (analog
+  zu `retranslate_oversized.py._text_to_ogg_bytes`)
+- Backup: `backup/gme_patch_same_lenght_v7.py`
+
+---
+
+## v7 – 2026-03-27
+
+### Retranslation automatisch im Pipeline-Modus
+- **Bug:** `max_diff=float('inf')` → `over_pct > max_diff` immer False → `_interactive_menu` und
+  damit `_retranslate()` (Option 3) niemals erreichbar → alles direkt truncated
+- **Fix:** Neue erste Verzweigung `if max_diff == float('inf'):` im Oversized-Block:
+  1. `_find_transcript()` → DE-Text aus `03_transcripts/{buch}/`
+  2. `_retranslate()` → DE-Text → Mistral kürzt+übersetzt → Edge-TTS
+  3. Ergebnis noch zu groß → `_shrink_ogg()` (atempo)
+  4. Atempo auch zu groß → `_truncate_ogg_inline()` (letzter Ausweg)
+  5. Kein Transkript / Mistral-Fehler → direkt `_truncate_ogg_inline()`
+- **Neue Methoden im Log:** `retranslated`, `retranslated+atempo`, `retranslated+truncated`
+- Max-Diff-Anzeige: bei `inf` zeigt Hinweis "Pipeline: Retranslation → Truncate"
+- **Bugfix:** `_extract_text()` für `magistral-medium-latest`: Content kommt als Liste von Blöcken
+  (reasoning + text) – `.strip()` auf Liste schlug fehl; analog zu `pipeline.py._extract_text()`
+- **Rate-Limit-Retry:** `_shorten_translate_mistral` wartet bei 429 nun 60s/90s/180s (3 Versuche);
+  0.5s Sleep nach jedem erfolgreichen Aufruf zum Schonen des Rate Limits
+- `import time` hinzugefügt
+- Backup: `backup/gme_patch_same_lenght_v6.py`
+
+---
+
 ## v6 – 2026-03-27
 
 ### Bugfix: Qualitätsreduktion + atempo wurden fälschlich von else-Branch überschrieben

@@ -1,5 +1,35 @@
 # Changelog – pipeline.py / Skripte / Notebooks
 
+## gme_patch_same_lenght.py v7 + pipeline.py v36 – 2026-03-27
+### Retranslation im Pipeline-Modus (max_diff=inf)
+- **Bug:** Bei `max_diff=float('inf')` wurde der `_interactive_menu`-Branch (inkl. Option 3: Retranslation)
+  niemals erreicht – `over_pct > inf` ist immer False → direkt truncated
+- **Fix:** Neue Verzweigung `if max_diff == float('inf'):` vor dem interaktiven Branch:
+  - Sucht DE-Transkript via `_find_transcript()`
+  - Ruft `_retranslate()` auf: DE-Text → Mistral kürzt+übersetzt → Edge-TTS
+  - Fallback-Kette: `retranslated` → `retranslated+atempo` → `retranslated+truncated` → `truncated`
+  - Kein Transkript vorhanden → direkt `truncated`
+- **Neue Log-Methoden:** `retranslated`, `retranslated+atempo`, `retranslated+truncated`
+- **pipeline.py v36:** `sl_lang` unterstützt alle 5 Sprachen (`fr/ch/vo/by/nd`) statt nur `fr/ch`
+- Backup: `backup/gme_patch_same_lenght_v6.py`, `backup/pipeline_v35_pre_retranslation.py`
+
+## pipeline.py v35 – 2026-03-27
+### Kompaktere Ausgaben (Schritt 1–5)
+- **Schritt 1:** tttool-Output unterdrückt (`capture_output=True`); zeigt nur Anzahl entpackter OGGs
+- **Schritt 2:** Header zeigt explizit "übersprungen" wenn speakers.json bereits vorhanden
+- **Schritt 3:** Zählt neue / Resume / Geräusch-Transkripte; zeigt Summary statt Einzel-Noise-Warnungen; Whisper-Progress nur wenn wirklich transkribiert wird
+- **Schritt 4:** `translate_batch` zeigt vor dem Start: "Alle N übersprungen" oder "N übersprungen, M werden übersetzt"
+- **Schritt 5:** Keine Einzeldatei-Logs mehr; zeigt Modus (ohne/mit Pausen), Stimmen-Verteilung am Anfang; Progress alle 100 Dateien inkl. Stimmen-Info; finaler Summary (erzeugt / übersprungen / fehlgeschlagen)
+- Backup: `backup/pipeline_v34_pre_compact_output.py`
+
+## pipeline.py v34 – 2026-03-27
+### --fast-tts Flag (Standard: an)
+- Zufällige Pausen zwischen TTS-Anfragen werden standardmäßig übersprungen
+- Hauptschleife: `asyncio.sleep(random.uniform(1.5, 3.0))` entfällt bei fast_tts=True
+- Retry-Schleife: `asyncio.sleep(random.uniform(5.0, 10.0))` entfällt bei fast_tts=True
+- `--no-fast-tts` reaktiviert die alten Pausen (für rate-limit-schonendes Verhalten)
+- Backup: `backup/pipeline_v33_pre_fast_tts.py`
+
 ## gme_uebertragen.sh (backup v1→v2) – 2026-03-27
 ### CH-Stift: vo/by/nd als Synonyme
 - `SEARCH_VARIANTS`-Array: bei `PEN_VARIANT=CH` werden zusätzlich `*_vo_*.gme`, `*_by_*.gme`, `*_nd_*.gme` gefunden
