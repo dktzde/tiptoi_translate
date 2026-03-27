@@ -62,6 +62,8 @@ MIN_RESUME_VERSION   = 29     # v29-Transkripte weiterhin gültig (kein Whisper-
                                # Dateien älter als v{MIN_RESUME_VERSION} werden ignoriert
                                # v30: --skip-assemble Flag (für gme_patch.py Workflow)
                                # v32: --use-patcher Flag (ALPHA): Schritt 6 via gme_patch.py
+                               # v33: TTS-Resume Fix (OGG bereits vorhanden → überspringen)
+                               # v33: --use-patcher-sl Flag: Schritt 6 via gme_patch_same_lenght.py (shift=0)
 
 # Tiptoi-kompatibles OGG-Format (Mono, 22050 Hz)
 OGG_CHANNELS   = "1"
@@ -670,7 +672,8 @@ def mix_with_original(original_ogg: Path, mp3_file: Path, ogg_out: Path,
 
 async def run(gme_path: Path, language: str, voice_override: str | None,
               whisper_model: str, limit: int = 0, skip_assemble: bool = False,
-              offline: bool = False, use_patcher: bool = False, min_k: int = 4):
+              offline: bool = False, use_patcher: bool = False,
+              use_patcher_sl: bool = False, min_k: int = 4):
     if not gme_path.exists():
         print(f"Fehler: Datei nicht gefunden: {gme_path}")
         sys.exit(1)
@@ -931,6 +934,26 @@ async def run(gme_path: Path, language: str, voice_override: str | None,
         print(f"\n── Schritt 6: GME neu packen – ÜBERSPRUNGEN (--skip-assemble) ──")
         print(f"  OGGs liegen in: {book_dir / 'media'}")
         print(f"  Weiter mit: python gme_patcher/gme_patch.py 01_input/{gme_path.name} {book_dir}/media/ 06_output/...")
+    elif use_patcher_sl:
+        print(f"\n── Schritt 6: GME neu packen via gme_patch_same_lenght.py (shift=0) ──")
+        sys.path.insert(0, str(BASE_DIR / "gme_patcher_same_lenght"))
+        from gme_patch_same_lenght import patch_gme as _patch_gme_sl
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        out_gme = OUTPUT_DIR / f"{book}{cfg['suffix']}_sl_{PIPELINE_VERSION}.gme"
+        # max_diff=inf: niemals interaktive Nachbesserung – immer auto-kürzen (ffmpeg)
+        # lang auf 'fr' mappen wenn unbekannt (Stimmen-Fallback im Patcher)
+        sl_lang = language if language in ("fr", "ch") else "fr"
+        _patch_gme_sl(
+            gme_path, tts_dir, out_gme,
+            voice=cfg["voices"][0],
+            lang=sl_lang,
+            max_diff=float("inf"),
+            speakers_json=speakers_file if speakers_file.exists() else None,
+        )
+        print(f"\n{'='*55}")
+        print(f"  Fertig! Neue GME-Datei (same-length):")
+        print(f"  {out_gme}")
+        print(f"{'='*55}\n")
     elif use_patcher:
         print(f"\n── Schritt 6: GME neu packen via gme_patch.py ──")
         sys.path.insert(0, str(BASE_DIR / "gme_patcher"))
@@ -999,6 +1022,11 @@ def main():
         help="[ALPHA] Schritt 6: gme_patch.py statt tttool assemble – erhält Spiele (Binary-Patch)",
     )
     parser.add_argument(
+        "--use-patcher-sl",
+        action="store_true",
+        help="Schritt 6: gme_patch_same_lenght.py – shift=0, Spieldaten unverändert (Audio auf Originalgröße angepasst)",
+    )
+    parser.add_argument(
         "--min-k",
         type=int,
         default=4,
@@ -1006,7 +1034,7 @@ def main():
         help="Minimale Sprecher-Anzahl für Clustering (Standard: 4); wird in colab_config.py geschrieben",
     )
     args = parser.parse_args()
-    asyncio.run(run(Path(args.gme), args.language, args.voice, args.whisper_model, args.limit, args.skip_assemble, args.offline, args.use_patcher, args.min_k))
+    asyncio.run(run(Path(args.gme), args.language, args.voice, args.whisper_model, args.limit, args.skip_assemble, args.offline, args.use_patcher, args.use_patcher_sl, args.min_k))
 
 
 if __name__ == "__main__":
