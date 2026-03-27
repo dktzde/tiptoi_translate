@@ -1,5 +1,5 @@
 """
-gme_patch_same_lenght.py v9 – GME Audio-Patcher (Binary-Patch, shift=0)
+gme_patch_same_lenght.py v10 – GME Audio-Patcher (Binary-Patch, shift=0)
 =========================================================================
 Ersetzt Audio in GME direkt im Binary. Jedes Ersatz-Audio wird auf exakt
 die Originalgröße gebracht (Padding oder Kompression). shift ist immer 0,
@@ -244,6 +244,29 @@ def _shrink_ogg(raw: bytes, max_bytes: int) -> bytes | None:
             except Exception:
                 continue
     return None
+
+
+def _apply_speed(raw: bytes, factor: float) -> bytes | None:
+    """Beschleunigt OGG um den angegebenen Faktor (z.B. 1.1 = 10% schneller).
+
+    Reduziert Dateigröße proportional zur Beschleunigung (~10% kleiner bei factor=1.1).
+    Keine Qualitätsveränderung – nur kürzere Dauer. Gibt None zurück bei Fehler.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        in_path = os.path.join(tmp, "in.ogg")
+        out_path = os.path.join(tmp, "out.ogg")
+        Path(in_path).write_bytes(raw)
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", in_path,
+                 "-filter:a", f"atempo={factor:.4f}",
+                 "-c:a", "libvorbis", "-ac", "1", "-ar", "22050",
+                 "-q:a", "4", out_path],
+                capture_output=True, timeout=30)
+            result = Path(out_path).read_bytes()
+            return result if result else None
+        except Exception:
+            return None
 
 
 def _reencode_lower_quality(raw: bytes, max_bytes: int) -> tuple[bytes | None, bytes | None]:
@@ -794,25 +817,36 @@ def patch_gme(original_gme: Path, media_dir: Path, output_gme: Path,
                 print(f"  idx={i}: {over:+,} B ({over_pct:.0%}) [{file_voice.split('-')[2]}]",
                       flush=True)
 
-                # Schritt 1: Qualitätsreduktion (gleiche Dauer, kein Speedup)
-                quality_fitted, quality_min = _reencode_lower_quality(raw, orig_len)
-                if quality_fitted:
-                    raw = quality_fitted
-                    method = "quality"
-                    print(f"    ✓ quality → {len(raw):,} B", flush=True)
-                else:
-                    # Schritt 2: atempo – auf minimaler Qualitätsbasis wenn möglich
-                    # (kleinere Eingabe → atempo bewältigt auch >2x-Fälle)
-                    atempo_input = (quality_min
-                                    if quality_min and len(quality_min) < len(raw)
-                                    else raw)
-                    shrunk = _shrink_ogg(atempo_input, orig_len)
-                    if shrunk:
-                        raw = shrunk
-                        method = "quality+atempo" if atempo_input is quality_min else "atempo"
-                        print(f"    ✓ {method} → {len(raw):,} B", flush=True)
+                # Schritt 0: 10% Beschleunigung (edge-tts spricht zu langsam)
+                raw_fast = _apply_speed(raw, 1.1)
+                if raw_fast:
+                    if len(raw_fast) <= orig_len:
+                        raw = raw_fast
+                        method = "speed10"
+                        print(f"    ✓ speed10 → {len(raw_fast):,} B", flush=True)
+                    else:
+                        raw = raw_fast  # kleinere Basis für nachfolgende Schritte
 
-                if method not in ("atempo", "quality", "quality+atempo"):
+                if method == "ok":
+                    # Schritt 1: Qualitätsreduktion (gleiche Dauer)
+                    quality_fitted, quality_min = _reencode_lower_quality(raw, orig_len)
+                    if quality_fitted:
+                        raw = quality_fitted
+                        method = "quality"
+                        print(f"    ✓ quality → {len(raw):,} B", flush=True)
+                    else:
+                        # Schritt 2: atempo – auf minimaler Qualitätsbasis wenn möglich
+                        # (kleinere Eingabe → atempo bewältigt auch >2x-Fälle)
+                        atempo_input = (quality_min
+                                        if quality_min and len(quality_min) < len(raw)
+                                        else raw)
+                        shrunk = _shrink_ogg(atempo_input, orig_len)
+                        if shrunk:
+                            raw = shrunk
+                            method = "quality+atempo" if atempo_input is quality_min else "atempo"
+                            print(f"    ✓ {method} → {len(raw):,} B", flush=True)
+
+                if method not in ("speed10", "atempo", "quality", "quality+atempo"):
                     # quality, quality+atempo und atempo haben alle nicht geholfen
                     if max_diff == float('inf'):
                         # Pipeline-Modus: für Batch-Retranslation vormerken
@@ -895,21 +929,30 @@ def patch_gme(original_gme: Path, media_dir: Path, output_gme: Path,
                 print(f"  ⚠ TTS fehlgeschlagen → bleibt truncated")
                 continue
 
-            # quality → quality+atempo → truncated
-            quality_fitted, quality_min = _reencode_lower_quality(new_raw, item["orig_len"])
-            if quality_fitted:
-                new_bytes = quality_fitted
-                new_method = "retranslated+quality"
+            # speed10 → quality → quality+atempo → truncated
+            new_method = "retranslated"
+            new_bytes = None
+
+            raw_fast = _apply_speed(new_raw, 1.1)
+            if raw_fast and len(raw_fast) <= item["orig_len"]:
+                new_bytes = raw_fast
+                new_method = "retranslated+speed10"
             else:
-                atempo_input = (quality_min if quality_min and len(quality_min) < len(new_raw)
-                                else new_raw)
-                shrunk = _shrink_ogg(atempo_input, item["orig_len"])
-                if shrunk:
-                    new_bytes = shrunk
-                    new_method = "retranslated+quality+atempo"
+                working = raw_fast if raw_fast and len(raw_fast) < len(new_raw) else new_raw
+                quality_fitted, quality_min = _reencode_lower_quality(working, item["orig_len"])
+                if quality_fitted:
+                    new_bytes = quality_fitted
+                    new_method = "retranslated+quality"
                 else:
-                    new_bytes = _truncate_ogg_inline(new_raw, item["orig_len"])
-                    new_method = "retranslated+truncated"
+                    atempo_input = (quality_min if quality_min and len(quality_min) < len(working)
+                                    else working)
+                    shrunk = _shrink_ogg(atempo_input, item["orig_len"])
+                    if shrunk:
+                        new_bytes = shrunk
+                        new_method = "retranslated+quality+atempo"
+                    else:
+                        new_bytes = _truncate_ogg_inline(new_raw, item["orig_len"])
+                        new_method = "retranslated+truncated"
 
             if len(new_bytes) < item["orig_len"]:
                 new_bytes = new_bytes + b'\x00' * (item["orig_len"] - len(new_bytes))

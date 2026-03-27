@@ -1,5 +1,24 @@
 # Changelog – gme_patch_same_lenght.py
 
+## v10 – 2026-03-27
+
+### 10%-Beschleunigung als erster Schritt
+
+- **Neuer Schritt 0:** `_apply_speed(raw, 1.1)` beschleunigt jedes zu große Audio um 10%
+  bevor quality reduction oder atempo versucht werden
+- **Warum:** edge-tts spricht sehr langsam mit Pausen → 10% schneller klingt natürlicher
+  UND reduziert Dateigröße um ~10% ohne Qualitätsverlust
+- **Neue Reihenfolge:** speed10 → quality → quality+atempo → atempo → Retranslation → Truncate
+- **speed10 allein genug:** method = `"speed10"` (neuer Methodenname im Log)
+- **speed10 als Basis:** Wenn speed10 nicht reicht, wird das bereits kleinere Audio als
+  Ausgangspunkt für quality reduction übergeben → weniger Qualitätsverlust nötig
+- **Phase 2 (retranslated):** Gleiche Logik: speed10 → quality → quality+atempo → truncated
+  Neuer Methodenname `"retranslated+speed10"` wenn speed10 allein reicht
+- **Methoden-Check aktualisiert:** `"speed10"` zu den erfolgreichen Methoden hinzugefügt
+- Backup: `backup/gme_patch_same_lenght_v9.py`
+
+---
+
 ## v9 – 2026-03-27
 
 ### Batch-Retranslation + erweiterte OGG-Kompression
