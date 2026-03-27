@@ -1,5 +1,5 @@
 """
-gme_patch.py v5 – GME Audio-Patcher (Binary-Patch, kein YAML-Roundtrip)
+gme_patch.py v6 – GME Audio-Patcher (Binary-Patch, kein YAML-Roundtrip)
 =========================================================================
 Ersetzt Audio-Dateien in einer Tiptoi-GME direkt im Binary.
 Spiele, Scripts und alle unbekannten Segmente bleiben bitgenau erhalten.
@@ -123,6 +123,61 @@ def build_file_index(media_dir: Path) -> dict[int, Path]:
 
 # ─── Safe-Modus (exakt wie libtiptoi.c replaceAudio) ─────────────────────────
 
+def _prepare_audio(
+    data: bytes,
+    xor: int,
+    entries: list[tuple[int, int]],
+    file_index: dict[int, Path],
+) -> tuple[list[bytes], dict[int, int], int, int]:
+    """Bereitet Audio-Blobs vor und bewahrt die Duplikat-Struktur.
+
+    tttool exportiert nur kanonische Indices (erstes Vorkommen jedes
+    einzigartigen Offsets). Duplikate (gleicher Offset) teilen sich
+    denselben Audio-Blob – genau wie im Original.
+
+    Gibt zurück: (unique_blobs, orig_off_to_blob_idx, replaced, kept)
+      unique_blobs:         Liste der einzigartigen Audio-Blobs
+      orig_off_to_blob_idx: Mapping orig_offset → Index in unique_blobs
+      replaced:             Anzahl ersetzter Einträge (inkl. Duplikate)
+      kept:                 Anzahl behaltener Einträge (inkl. Duplikate)
+    """
+    # ── Duplikat-Mapping: offset → kanonischer Index ──
+    offset_to_canonical: dict[int, int] = {}
+    for i, (off, _) in enumerate(entries):
+        if off not in offset_to_canonical:
+            offset_to_canonical[off] = i
+
+    # ── Einzigartige Blobs in Reihenfolge des Erstauftretens ──
+    unique_blobs: list[bytes] = []
+    orig_off_to_blob_idx: dict[int, int] = {}
+    replaced = 0
+    kept = 0
+
+    for i, (orig_off, orig_len) in enumerate(entries):
+        canonical = offset_to_canonical[orig_off]
+        is_canonical = (i == canonical)
+
+        if is_canonical:
+            # Kanonischer Eintrag: Blob erzeugen
+            if i in file_index:
+                raw = file_index[i].read_bytes()
+                replaced += 1
+            else:
+                enc = data[orig_off:orig_off + orig_len]
+                raw = xor_codec(enc, xor)
+                kept += 1
+            orig_off_to_blob_idx[orig_off] = len(unique_blobs)
+            unique_blobs.append(raw)
+        else:
+            # Duplikat: zählen, aber kein neuer Blob
+            if canonical in file_index:
+                replaced += 1
+            else:
+                kept += 1
+
+    return unique_blobs, orig_off_to_blob_idx, replaced, kept
+
+
 def _patch_safe(
     data: bytes,
     table_offset: int,
@@ -133,7 +188,7 @@ def _patch_safe(
     """Baut GME exakt wie libtiptoi.c replaceAudio():
     Header[0..audioTableOffset] + neue Tabelle + Audio + Checksum.
 
-    Kein Duplikat-Dedup: jeder Tabellenindex bekommt eigene Audio-Kopie.
+    Duplikat-Einträge teilen sich denselben Offset (wie im Original).
     Kein Post-Audio. Keine Pointer-Korrektur.
 
     Gibt zurück: (result_bytearray, replaced_count, kept_count)
@@ -141,41 +196,28 @@ def _patch_safe(
     first_audio_offset = entries[0][0]
     count = len(entries)
 
-    # ── Audio-Daten vorbereiten (pro Index, kein Dedup) ──
-    # Wie libtiptoi.c: jeder Index bekommt eigene Kopie
-    audio_blobs: list[bytes] = []
-    replaced = 0
-    kept = 0
+    unique_blobs, orig_off_to_blob_idx, replaced, kept = \
+        _prepare_audio(data, xor, entries, file_index)
 
-    for i, (orig_off, orig_len) in enumerate(entries):
-        if i in file_index:
-            raw = file_index[i].read_bytes()
-            replaced += 1
-        else:
-            # Original beibehalten: dekodieren (wird später neu kodiert)
-            enc = data[orig_off:orig_off + orig_len]
-            raw = xor_codec(enc, xor)
-            kept += 1
-        audio_blobs.append(raw)
-
-    # ── Zusammenbauen (wie libtiptoi.c) ──
-    # 1. Header bis audioTableOffset (vor der Tabelle)
-    result = bytearray(data[:table_offset])
-
-    # 2. Neue Audio-Tabelle schreiben
-    #    nextOffset startet bei first_audio_offset (= table_offset + count * 8)
+    # ── Neue Offsets für einzigartige Blobs berechnen ──
+    blob_new_offsets: list[tuple[int, int]] = []  # (new_offset, length)
     next_offset = first_audio_offset
-    new_table = bytearray(count * 8)
-    for i, blob in enumerate(audio_blobs):
-        struct.pack_into('<II', new_table, i * 8, next_offset, len(blob))
+    for blob in unique_blobs:
+        blob_new_offsets.append((next_offset, len(blob)))
         next_offset += len(blob)
+
+    # ── Audio-Tabelle: Duplikate zeigen auf denselben Offset ──
+    new_table = bytearray(count * 8)
+    for i, (orig_off, _) in enumerate(entries):
+        blob_idx = orig_off_to_blob_idx[orig_off]
+        new_off, new_len = blob_new_offsets[blob_idx]
+        struct.pack_into('<II', new_table, i * 8, new_off, new_len)
+
+    # ── Zusammenbauen ──
+    result = bytearray(data[:table_offset])
     result.extend(new_table)
-
-    # 3. Audio-Daten schreiben (XOR-verschlüsselt)
-    for blob in audio_blobs:
+    for blob in unique_blobs:
         result.extend(xor_codec(blob, xor))
-
-    # 4. Checksum
     cs = checksum(result)
     result.extend(struct.pack('<I', cs))
 
@@ -257,6 +299,7 @@ def _patch_experimental(
     """Wie Safe-Modus, plus:
     - Post-Audio-Daten (Binaries, Spiele) bitgenau anhängen
     - Gezielte Pointer-Korrektur (nur bekannte Header-Felder)
+    - Duplikat-Struktur wird bewahrt (Zusatz-Tabelle bleibt konsistent)
     - KEIN Blind-Scan
 
     Gibt zurück: (result_bytearray, replaced_count, kept_count)
@@ -270,44 +313,36 @@ def _patch_experimental(
     print(f"Post-Audio:    0x{last_audio_end:08X} – 0x{orig_file_size - 4:08X} "
           f"({len(post_audio):,} Bytes)")
 
-    # ── Audio-Daten vorbereiten (pro Index, kein Dedup) ──
-    audio_blobs: list[bytes] = []
-    replaced = 0
-    kept = 0
+    unique_blobs, orig_off_to_blob_idx, replaced, kept = \
+        _prepare_audio(data, xor, entries, file_index)
 
-    for i, (orig_off, orig_len) in enumerate(entries):
-        if i in file_index:
-            raw = file_index[i].read_bytes()
-            replaced += 1
-        else:
-            enc = data[orig_off:orig_off + orig_len]
-            raw = xor_codec(enc, xor)
-            kept += 1
-        audio_blobs.append(raw)
+    # ── Neue Offsets für einzigartige Blobs berechnen ──
+    blob_new_offsets: list[tuple[int, int]] = []
+    next_offset = first_audio_offset
+    for blob in unique_blobs:
+        blob_new_offsets.append((next_offset, len(blob)))
+        next_offset += len(blob)
+
+    # ── Audio-Tabelle: Duplikate zeigen auf denselben Offset ──
+    new_table = bytearray(count * 8)
+    for i, (orig_off, _) in enumerate(entries):
+        blob_idx = orig_off_to_blob_idx[orig_off]
+        new_off, new_len = blob_new_offsets[blob_idx]
+        struct.pack_into('<II', new_table, i * 8, new_off, new_len)
 
     # ── Zusammenbauen ──
-    # 1. Header bis audioTableOffset
     result = bytearray(data[:table_offset])
-
-    # 2. Neue Audio-Tabelle
-    next_offset = first_audio_offset
-    new_table = bytearray(count * 8)
-    for i, blob in enumerate(audio_blobs):
-        struct.pack_into('<II', new_table, i * 8, next_offset, len(blob))
-        next_offset += len(blob)
     result.extend(new_table)
-
-    # 3. Audio-Daten (XOR-verschlüsselt)
-    for blob in audio_blobs:
+    for blob in unique_blobs:
         result.extend(xor_codec(blob, xor))
 
     new_audio_end = len(result)
     shift = new_audio_end - last_audio_end
 
-    # 4. Post-Audio-Daten anhängen
+    # Post-Audio-Daten anhängen
     result.extend(post_audio)
 
-    # 5. Gezielte Pointer-Korrektur (alle bekannten Header-Felder)
+    # Gezielte Pointer-Korrektur (alle bekannten Header-Felder)
     updated_ptrs = 0
     for hdr_off, (name, has_internals) in _POST_AUDIO_HEADERS.items():
         if hdr_off + 4 > len(result):
@@ -320,7 +355,6 @@ def _patch_experimental(
             w32(result, hdr_off, new_val)
             updated_ptrs += 1
             print(f"  0x{hdr_off:04X} {name:20s} 0x{val:08X} → 0x{new_val:08X}")
-            # Binary-Table-Interna verschieben
             if has_internals:
                 n = _shift_binary_table(
                     result, new_val, last_audio_end, orig_file_size, shift
@@ -329,25 +363,10 @@ def _patch_experimental(
                     updated_ptrs += n
                     print(f"         └─ {n} interne Pointer verschoben")
 
-    # 6. Zusatz-Audio-Tabelle (0x0060) aktualisieren
-    add_table_off = r32(bytes(result), 0x0060)
-    if (0 < add_table_off < first_audio_offset
-            and add_table_off != table_offset):
-        # Prüfe ob Eintragsanzahl konsistent ist
-        add_count = (first_audio_offset - add_table_off) // 8
-        if add_count == count:
-            next_offset = first_audio_offset
-            for i, blob in enumerate(audio_blobs):
-                pos = add_table_off + i * 8
-                w32(result, pos, next_offset)
-                w32(result, pos + 4, len(blob))
-                next_offset += len(blob)
-            print(f"Zusatz-Tabelle aktualisiert: 0x{add_table_off:08X} ({count} Einträge)")
-
     if updated_ptrs > 0:
         print(f"Post-Audio-Zeiger verschoben: {updated_ptrs} (shift={shift:+,} Bytes)")
 
-    # 7. Checksum
+    # Checksum
     cs = checksum(result)
     result.extend(struct.pack('<I', cs))
 

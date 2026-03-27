@@ -1,5 +1,36 @@
 # Changelog – gme_patch.py
 
+## v6 – 2026-03-27
+
+### Bugfix (kritisch): Duplikat-Struktur bewahren + Duplikate korrekt ersetzen
+
+**2 Ursachen für Stift-Absturz bei Feuerwehr BY (experimentell):**
+
+1. **Duplikate nicht ersetzt (v5-Bug):** tttool exportiert nur kanonische
+   Indices. Duplikat-Einträge (gleicher Offset) bekamen keinen Ersatz →
+   spielten Original-DE statt Zielsprache. 511/1160 statt 1022/1160 ersetzt.
+
+2. **Duplikat-Struktur zerstört (v5+v6-früher Bug):** v5 gab jedem Eintrag
+   eine eigene Audio-Kopie → Entries 580–1159 hatten andere Offsets als 0–579.
+   Die Zusatz-Audio-Tabelle bei 0x0060 zeigt auf Entry 580 (= Mitte der
+   Tabelle). Der Stift erwartet dort eine exakte Kopie von Entries 0–579.
+   → 0/580 Einträge identisch → Stift-Absturz bei Spiel-Interaktion.
+
+### Fix: `_prepare_audio()` – gemeinsame Funktion für beide Modi
+
+- Neue Funktion `_prepare_audio()` erzeugt nur einzigartige Audio-Blobs
+- Duplikate teilen sich denselben Offset wie ihr kanonischer Eintrag
+- Audio-Tabelle bewahrt exakt die Duplikat-Struktur des Originals
+- Ergebnis: 580/580 identische Eintragspaare (wie Original)
+- Dateigröße: 26 MB statt 54 MB (kein doppeltes Audio)
+- Shift: +12 MB statt +39 MB
+
+### Files
+- `gme_patch.py` v6
+- `backup/gme_patch_v6.py`
+
+---
+
 ## v5 – 2026-03-26
 
 ### Vollständige Post-Audio Pointer-Abdeckung

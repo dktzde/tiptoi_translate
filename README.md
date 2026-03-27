@@ -242,5 +242,5 @@ backup/         Versionierte Skript-Backups
 
 - Python 3.13, faster-whisper, mistralai (Magistral), edge-tts, resemblyzer, python-dotenv
 - tttool 1.11 (Haskell-Binary)
-- gme_patch.py v5 (Binary-Patch, erhält Spiele-Logik)
+- gme_patch.py v6 (Binary-Patch, erhält Spiele-Logik)
 - ffmpeg 7.1

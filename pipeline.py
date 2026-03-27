@@ -56,7 +56,7 @@ COLAB_DIR       = BASE_DIR / "07_colab_upload"
 TTTOOL          = "tttool"
 DEFAULT_LANGUAGE = "fr"
 DEFAULT_WHISPER  = "small"
-PIPELINE_VERSION     = "v32"  # wird an alle erzeugten Dateinamen angehängt
+PIPELINE_VERSION     = "v33"  # wird an alle erzeugten Dateinamen angehängt
 NOISE_MIX_MIN_SEC    = 0.5    # Geräuschanteil < dieser Wert → kein Mix, nur TTS
 MIN_RESUME_VERSION   = 29     # v29-Transkripte weiterhin gültig (kein Whisper-Neulauf)
                                # Dateien älter als v{MIN_RESUME_VERSION} werden ignoriert
@@ -891,12 +891,18 @@ async def run(gme_path: Path, language: str, voice_override: str | None,
                     mp3_file.unlink()
         return True
 
+    tts_skipped = 0
     for i, ogg_file in enumerate(ogg_files, 1):
         key           = ogg_file.stem
         translation_f = _find_resume(translated_dir, key, ".txt") or (translated_dir / f"{key}_{PIPELINE_VERSION}.txt")
         mp3_file      = _find_resume(tts_dir, key, ".mp3")         or (tts_dir / f"{key}_{PIPELINE_VERSION}.mp3")
         ogg_out       = tts_dir / ogg_file.name   # nie in media_dir schreiben → Originals bleiben erhalten
         voice         = voice_for(key)
+
+        # Resume: OGG existiert bereits → TTS + Konvertierung überspringen
+        if ogg_out.exists() and ogg_out.stat().st_size > 0:
+            tts_skipped += 1
+            continue
 
         if not translation_f.exists():
             continue
@@ -909,6 +915,9 @@ async def run(gme_path: Path, language: str, voice_override: str | None,
             failed_tts.append((ogg_file, key, translated, mp3_file, voice, ogg_out, i))
 
         await asyncio.sleep(random.uniform(1.5, 3.0))
+
+    if tts_skipped:
+        print(f"  Resume: {tts_skipped} OGGs bereits vorhanden → übersprungen", flush=True)
 
     # Retry-Durchlauf für fehlgeschlagene TTS-Dateien
     if failed_tts:
