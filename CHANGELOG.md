@@ -1,5 +1,31 @@
 # Changelog – pipeline.py / Skripte / Notebooks
 
+## colab_pipeline v23 – 2026-03-28
+### GPU-Typ automatische Erkennung
+- `GPU_TYPE = 'T4'` (hartkodiert) ersetzt durch `_detect_gpu_type()` Funktion
+- Erkennt GPU via `torch.cuda.get_device_name(0)`: T4, L4, A100-40, A100-80, G4, H100
+- A100-Unterscheidung per VRAM-Größe (>60 GB → A100_80, sonst A100_40)
+- Ausgabe: `GPU-Typ erkannt: A100_40  (NVIDIA A100-SXM4-40GB)` statt immer T4 in CSV
+- Fallback auf `T4` bei unbekannter GPU oder CPU-Modus
+- `colab_pipeline_example.ipynb` ebenfalls aktualisiert
+- Backup: `backup/colab_pipeline_v23.ipynb`
+
+## pipeline.py v38 – 2026-03-28
+### Retry bei Mistral 503 / unreachable_backend
+- Retry-Logik in `translate_one()` und `translate_batch()` erkennt nun auch 503-Fehler
+- Bedingung erweitert: `"503"`, `"unreachable"`, `"backend"`, `"server error"` lösen Retry aus
+- Ausgabe zeigt `SERVER ERROR 503` statt `RATE LIMIT` bei Server-Fehlern
+- Gleiche Wartezeiten wie bei Rate Limit: 60s / 90s / 180s
+- Backup: `backup/pipeline_v37_503_retry.py`
+
+## pipeline.py v37 – 2026-03-28
+### Zeichenbasierte Übersetzungs-Batches
+- `BATCH_SIZE = 10` (feste Anzahl) ersetzt durch `BATCH_MAX_CHARS = 1300` (max. Zeichen/Batch)
+- `BATCH_MAX_CHARS` steht im Hauptkonfig-Block oben (neben `PIPELINE_VERSION`) – einfach änderbar
+- Neue Batch-Logik: Items werden akkumuliert bis `sum(len(text)) > BATCH_MAX_CHARS` → neuer Batch
+- Print-Ausgabe: `"in N Batches (max. 1300 Zeichen)"` statt `"(à 10)"`
+- Backup: `backup/pipeline_v36_pre_char_batching.py`
+
 ## gme_patch_same_lenght.py v7 + pipeline.py v36 – 2026-03-27
 ### Retranslation im Pipeline-Modus (max_diff=inf)
 - **Bug:** Bei `max_diff=float('inf')` wurde der `_interactive_menu`-Branch (inkl. Option 3: Retranslation)
