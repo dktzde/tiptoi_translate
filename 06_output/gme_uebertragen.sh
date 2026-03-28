@@ -11,6 +11,24 @@ MOUNTPOINT="/media/dom/tiptoi"
 TTTOOL="${HOME}/.local/bin/tttool"
 KEIN_UNMOUNT=0
 PRUEFE_STIFT=0
+DRY_RUN=0  # Dry-Run-Modus (keine Änderungen, nur Simulation)
+
+# Farben für Ausgaben
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'  # No Color
+
+# ════════════════════════════════════════════════════════
+# 0. Vorab-Checks: tttool und Berechtigungen
+# ════════════════════════════════════════════════════════
+# Prüfe tttool
+if ! command -v "$TTTOOL" >/dev/null 2>&1; then
+    echo -e "${RED}FEHLER: tttool nicht gefunden unter: $TTTOOL${NC}"
+    echo "Bitte installieren oder Pfad in Zeile 12 anpassen."
+    exit 1
+fi
 
 # PIDs die mehrfach auf dem Stift vorkommen dürfen (tiptoi-global, kein Konflikt)
 SHARED_PIDS="53"
@@ -19,6 +37,7 @@ for ARG in "$@"; do
     case "$ARG" in
         --kein-unmount|-k) KEIN_UNMOUNT=1 ;;
         --pruefe-stift|-p) PRUEFE_STIFT=1 ;;
+        --dry-run|-n) DRY_RUN=1 ;;
         --help|-h)
             echo "Verwendung: $(basename "$0") [OPTIONEN]"
             echo ""
@@ -26,11 +45,14 @@ for ARG in "$@"; do
             echo "Liest Stift-Konfiguration aus /media/dom/tiptoi/pen.conf."
             echo ""
             echo "Optionen:"
-            echo "  --pruefe-stift / -p   PIDs aller GME-Dateien auf dem Stift prüfen:"
+            echo "  --pruefe-stift / -p   PIDs und Sprache aller GME-Dateien auf dem Stift prüfen:"
             echo "                        - Dateien ohne _pid_XXX im Namen werden umbenannt"
             echo "                        - PID-Konflikte werden interaktiv aufgelöst"
+            echo "                        - Sprachprüfung (wenn FORCE_LANGUAGE=true in pen.conf)"
+            echo "                        - Ergebnis wird in pen.conf gespeichert (LANG_CHECK=ok/pending)"
             echo "                        - kein Transfer, kein Unmount"
             echo "  --kein-unmount / -k   Stift nach der Übertragung NICHT auswerfen"
+            echo "  --dry-run / -n        Dry-Run: Keine Änderungen durchführen (nur Simulation)"
             echo "  --help / -h           Diese Hilfe anzeigen"
             echo ""
             echo "Dateiformat auf Stift: <Name>_pid_XXX.gme  (XXX = 3-stellig, z.B. _pid_033)"
@@ -152,7 +174,10 @@ echo "Stift erkannt: $DEVICE → $MOUNTPOINT"
 PEN_CONF="$MOUNTPOINT/pen.conf"
 if [ ! -f "$PEN_CONF" ]; then
     echo "pen.conf nicht gefunden."
-    read -r -p "Soll sie jetzt angelegt werden? [j/n]: " ANS
+    read -r -t 30 -p "Soll sie jetzt angelegt werden? [j/n]: " ANS || {
+        echo -e "${YELLOW}Timeout (30s) – Abbruch.${NC}";
+        exit 1;
+    }
     if [[ ! "$ANS" =~ ^[jJyY]$ ]]; then
         echo "Abbruch."
         exit 1
@@ -168,42 +193,109 @@ if [ ! -f "$PEN_CONF" ]; then
         _SUGGEST_LANG=$(  dd if="$_LOG" bs=1 count=16 skip=32 2>/dev/null | tr -cd '[:print:]')
     fi
 
-    read -r -p "PEN_ID (z.B. 03): " PEN_ID
+    read -r -t 30 -p "PEN_ID (z.B. 03): " PEN_ID || {
+        echo -e "${YELLOW}Timeout (30s) – Abbruch.${NC}";
+        exit 1;
+    }
 
     if [ -n "$_SUGGEST_SERIAL" ]; then
-        read -r -p "PEN_SERIAL [$_SUGGEST_SERIAL]: " PEN_SERIAL
+        read -r -t 30 -p "PEN_SERIAL [$_SUGGEST_SERIAL]: " PEN_SERIAL || {
+            echo -e "${YELLOW}Timeout (30s) – Abbruch.${NC}";
+            exit 1;
+        }
         PEN_SERIAL="${PEN_SERIAL:-$_SUGGEST_SERIAL}"
     else
-        read -r -p "PEN_SERIAL: " PEN_SERIAL
+        read -r -t 30 -p "PEN_SERIAL: " PEN_SERIAL || {
+            echo -e "${YELLOW}Timeout (30s) – Abbruch.${NC}";
+            exit 1;
+        }
     fi
 
     if [ -n "$_SUGGEST_LANG" ]; then
-        read -r -p "PEN_LANG [$_SUGGEST_LANG]: " PEN_LANG
+        read -r -t 30 -p "PEN_LANG [$_SUGGEST_LANG]: " PEN_LANG || {
+            echo -e "${YELLOW}Timeout (30s) – Abbruch.${NC}";
+            exit 1;
+        }
         PEN_LANG="${PEN_LANG:-$_SUGGEST_LANG}"
     else
-        read -r -p "PEN_LANG (z.B. GERMAN, FRENCH): " PEN_LANG
+        read -r -t 30 -p "PEN_LANG (z.B. GERMAN, FRENCH): " PEN_LANG || {
+            echo -e "${YELLOW}Timeout (30s) – Abbruch.${NC}";
+            exit 1;
+        }
     fi
 
-    read -r -p "PEN_VARIANT (z.B. CH, FR): " PEN_VARIANT
+    read -r -t 30 -p "PEN_VARIANT (z.B. CH, FR): " PEN_VARIANT || {
+        echo -e "${YELLOW}Timeout (30s) – Abbruch.${NC}";
+        exit 1;
+    }
+
+    # FORCE_LANGUAGE: Erzwingt, dass GME-Dateien die Stift-Sprache haben (true/false)
+    read -r -t 30 -p "FORCE_LANGUAGE (true/false – erzwingt GME-Sprache = Stift-Sprache): " FORCE_LANGUAGE || {
+        echo -e "${YELLOW}Timeout (30s) – Abbruch.${NC}";
+        exit 1;
+    }
 
     if [ -z "$PEN_ID" ] || [ -z "$PEN_SERIAL" ] || [ -z "$PEN_LANG" ] || [ -z "$PEN_VARIANT" ]; then
         echo "FEHLER: Alle Felder müssen ausgefüllt sein."
         exit 1
     fi
 
-    printf 'PEN_ID=%s\nPEN_SERIAL=%s\nPEN_LANG=%s\nPEN_VARIANT=%s\n' \
-        "$PEN_ID" "$PEN_SERIAL" "$PEN_LANG" "$PEN_VARIANT" > "$PEN_CONF"
+    # FORCE_LANGUAGE als true/false speichern (Standard: false)
+    FORCE_LANGUAGE_VALUE="false"
+    if [[ "$FORCE_LANGUAGE" =~ ^[tT][rR][uU][eE]$|^[jJ][aA]$|^[1]$ ]]; then
+        FORCE_LANGUAGE_VALUE="true"
+    fi
+    printf 'PEN_ID=%s\nPEN_SERIAL=%s\nPEN_LANG=%s\nPEN_VARIANT=%s\nFORCE_LANGUAGE=%s\n' \
+        "$PEN_ID" "$PEN_SERIAL" "$PEN_LANG" "$PEN_VARIANT" "$FORCE_LANGUAGE_VALUE" > "$PEN_CONF"
     echo ""
     echo "pen.conf angelegt: $PEN_CONF"
 else
     # shellcheck source=/dev/null
+    unset FORCE_LANGUAGE
     source "$PEN_CONF"
     if [ -z "${PEN_ID:-}" ] || [ -z "${PEN_SERIAL:-}" ] || [ -z "${PEN_LANG:-}" ] || [ -z "${PEN_VARIANT:-}" ]; then
         echo "FEHLER: pen.conf unvollständig (PEN_ID, PEN_SERIAL, PEN_LANG, PEN_VARIANT erforderlich)"
         exit 1
     fi
+
+    # Nutzer fragen, falls FORCE_LANGUAGE fehlt oder ungültig ist
+    if [ -z "${FORCE_LANGUAGE+x}" ] || [[ ! "$FORCE_LANGUAGE" =~ ^(true|false)$ ]]; then
+        if [ -z "${FORCE_LANGUAGE+x}" ]; then
+            echo "FORCE_LANGUAGE fehlt in pen.conf."
+        else
+            echo "FORCE_LANGUAGE in pen.conf ist ungültig: '$FORCE_LANGUAGE'"
+        fi
+        read -r -t 30 -p "FORCE_LANGUAGE aktivieren? (true/false): " FORCE_LANGUAGE_INPUT || {
+            echo -e "${YELLOW}Timeout (30s) – Abbruch.${NC}";
+            exit 1;
+        }
+        if [[ "$FORCE_LANGUAGE_INPUT" =~ ^[tT][rR][uU][eE]$|^[jJ][aA]$|^[1]$ ]]; then
+            FORCE_LANGUAGE="true"
+        else
+            FORCE_LANGUAGE="false"
+        fi
+        # Schreibrechte für pen.conf sicherstellen
+        if [ ! -w "$PEN_CONF" ]; then
+            echo -e "  ${YELLOW}Warnung: Keine Schreibrechte für $PEN_CONF – versuche zu korrigieren ...${NC}"
+            chmod u+w "$PEN_CONF" 2>/dev/null || {
+                echo -e "  ${RED}FEHLER: Konnte Schreibrechte nicht anpassen. Bitte manuell korrigieren.${NC}";
+                exit 1;
+            }
+        fi
+        # pen.conf erweitern oder aktualisieren (außer im Dry-Run)
+        if [ "$DRY_RUN" -eq 0 ]; then
+            if grep -q "^FORCE_LANGUAGE=" "$PEN_CONF"; then
+                sed -i "s/^FORCE_LANGUAGE=.*/FORCE_LANGUAGE=$FORCE_LANGUAGE/" "$PEN_CONF"
+            else
+                echo "FORCE_LANGUAGE=$FORCE_LANGUAGE" >> "$PEN_CONF"
+            fi
+            echo "pen.conf aktualisiert: FORCE_LANGUAGE=$FORCE_LANGUAGE"
+        else
+            echo "[DRY RUN] Würde pen.conf aktualisieren: FORCE_LANGUAGE=$FORCE_LANGUAGE"
+        fi
+    fi
 fi
-echo "pen.conf:    PEN_ID=$PEN_ID  PEN_SERIAL=$PEN_SERIAL  PEN_LANG=$PEN_LANG  PEN_VARIANT=$PEN_VARIANT"
+echo "pen.conf:    PEN_ID=$PEN_ID  PEN_SERIAL=$PEN_SERIAL  PEN_LANG=$PEN_LANG  PEN_VARIANT=$PEN_VARIANT  FORCE_LANGUAGE=$FORCE_LANGUAGE"
 
 # ════════════════════════════════════════════════════════
 # 3. .tiptoi.log prüfen (Seriennummer + Sprache)
@@ -298,6 +390,71 @@ if [ "$PRUEFE_STIFT" -eq 1 ]; then
     if [ "$CONFLICTS" -eq 0 ]; then
         echo "  Keine Konflikte gefunden."
     fi
+
+    # ── Phase 3: Sprachprüfung ───────────────────────────────────────────────
+    echo ""
+    if [ "$FORCE_LANGUAGE" = "true" ]; then
+        echo "Phase 3: Sprachprüfung aller GME-Dateien (FORCE_LANGUAGE=true) ..."
+        echo ""
+
+        RUN_LANG_CHECK=1
+        if [ "${LANG_CHECK:-}" = "ok" ]; then
+            echo "  Status aus pen.conf: alle Dateien haben Sprache gesetzt (LANG_CHECK=ok)."
+            read -r -t 30 -p "  Trotzdem alle Dateien prüfen? [j/n]: " _ANS < /dev/tty || _ANS="n"
+            if [[ ! "$_ANS" =~ ^[jJyY]$ ]]; then
+                RUN_LANG_CHECK=0
+                echo "  Prüfung übersprungen."
+            fi
+        fi
+
+        if [ "$RUN_LANG_CHECK" -eq 1 ]; then
+            LANG_ERRORS=0
+            LANG_FIXED=0
+            LANG_COUNT=0
+            while IFS= read -r -d '' _F; do
+                _BASE=$(basename "$_F")
+                _LANG=$("$TTTOOL" info "$_F" 2>/dev/null | grep -i "^Language:" | awk '{print $2}' || true)
+                LANG_COUNT=$((LANG_COUNT + 1))
+                if [ -z "$_LANG" ]; then
+                    echo -n "  FEHLT: $_BASE → setze $PEN_LANG ... "
+                    if "$TTTOOL" set-language "$PEN_LANG" "$_F" 2>/dev/null; then
+                        echo "OK"
+                        LANG_FIXED=$((LANG_FIXED + 1))
+                    else
+                        echo -e "${RED}FEHLER${NC}"
+                        LANG_ERRORS=$((LANG_ERRORS + 1))
+                    fi
+                fi
+            done < <(find "$MOUNTPOINT" -maxdepth 1 \( -name "*.gme" -o -name "*.gmex" \) -print0)
+
+            echo ""
+            [ "$LANG_FIXED" -gt 0 ] && echo "  $LANG_FIXED Datei(en) automatisch auf $PEN_LANG gesetzt."
+            # LANG_CHECK + LANG_ERRORS in pen.conf speichern
+            _LANG_CHECK_VAL="ok"
+            [ "$LANG_ERRORS" -gt 0 ] && _LANG_CHECK_VAL="pending"
+
+            if [ "$LANG_ERRORS" -eq 0 ]; then
+                echo "  Alle $LANG_COUNT Datei(en) haben Sprache gesetzt."
+            else
+                echo "  $LANG_ERRORS von $LANG_COUNT Datei(en) – Sprache konnte nicht gesetzt werden."
+            fi
+
+            if grep -q "^LANG_CHECK=" "$PEN_CONF"; then
+                sed -i "s/^LANG_CHECK=.*/LANG_CHECK=$_LANG_CHECK_VAL/" "$PEN_CONF"
+            else
+                echo "LANG_CHECK=$_LANG_CHECK_VAL" >> "$PEN_CONF"
+            fi
+            if grep -q "^LANG_ERRORS=" "$PEN_CONF"; then
+                sed -i "s/^LANG_ERRORS=.*/LANG_ERRORS=$LANG_ERRORS/" "$PEN_CONF"
+            else
+                echo "LANG_ERRORS=$LANG_ERRORS" >> "$PEN_CONF"
+            fi
+            echo "  pen.conf aktualisiert: LANG_CHECK=$_LANG_CHECK_VAL  LANG_ERRORS=$LANG_ERRORS"
+        fi
+    else
+        echo "Phase 3: Sprachprüfung übersprungen (FORCE_LANGUAGE=false)."
+    fi
+
     echo ""
     echo "════════════════════════════════════════════════════════"
     echo "Stift-Prüfung abgeschlossen. Kein Transfer, kein Unmount."
@@ -359,10 +516,26 @@ else
 
         # ── Sprachcheck ──────────────────────────────────────────────────────
         LANG_INFO=$("$TTTOOL" info "$FILE" 2>/dev/null | grep -i "^Language:" | awk '{print $2}' || true)
-        if [ -n "$LANG_INFO" ] && [ "$LANG_INFO" != "$PEN_LANG" ]; then
-            echo "   ÜBERSPRUNGEN: Sprache '$LANG_INFO' passt nicht zu Stift ($PEN_LANG)"
-            WARNINGS+=("$BASENAME: falsche Sprache ($LANG_INFO statt $PEN_LANG)")
-            continue
+        
+        if [ "$FORCE_LANGUAGE" = "true" ]; then
+            echo "   FORCE_LANGUAGE aktiv: GME muss Stift-Sprache haben ($PEN_LANG)"
+            if [ -z "$LANG_INFO" ]; then
+                echo "   WARNUNG: GME hat keine Sprachinfo – versuche via tttool zu setzen ..."
+                if ! "$TTTOOL" set-language "$FILE" "$PEN_LANG" 2>/dev/null; then
+                    echo "   FEHLER: Sprache konnte nicht gesetzt werden – Datei übersprungen."
+                    WARNINGS+=("$BASENAME: Sprache fehlt und konnte nicht gesetzt werden")
+                    continue
+                fi
+                LANG_INFO=$PEN_LANG
+                echo "   Sprache gesetzt auf: $LANG_INFO"
+            fi
+            if [ "$LANG_INFO" != "$PEN_LANG" ]; then
+                echo -e "   ${RED}ÜBERSPRUNGEN: Sprache '$LANG_INFO' passt nicht zu Stift-Sprache ($PEN_LANG)${NC}"
+                WARNINGS+=("$BASENAME: falsche Sprache ($LANG_INFO statt $PEN_LANG)")
+                continue
+            fi
+        else
+            echo "   FORCE_LANGUAGE inaktiv – Sprache wird nicht erzwungen."
         fi
 
         # ── PID auslesen und _pid_XXX in Dateinamen einfügen ─────────────────
@@ -409,12 +582,20 @@ else
         fi
 
         # ── Übertragen ────────────────────────────────────────────────────────
-        cp "$FILE" "$MOUNTPOINT/$BASENAME"
-        echo "   Übertragen auf Stift."
+        if [ "$DRY_RUN" -eq 0 ]; then
+            cp "$FILE" "$MOUNTPOINT/$BASENAME"
+            echo "   Übertragen auf Stift."
+        else
+            echo "   [DRY RUN] Würde übertragen: $BASENAME"
+        fi
 
         # ── In Unterordner verschieben ────────────────────────────────────────
-        mv "$FILE" "$TARGET_DIR/$BASENAME"
-        echo "   Verschoben nach: $(basename "$TARGET_DIR")/"
+        if [ "$DRY_RUN" -eq 0 ]; then
+            mv "$FILE" "$TARGET_DIR/$BASENAME"
+            echo "   Verschoben nach: $(basename "$TARGET_DIR")/"
+        else
+            echo "   [DRY RUN] Würde verschieben nach: $(basename "$TARGET_DIR")/"
+        fi
 
         TRANSFERRED+=("$BASENAME")
     done
