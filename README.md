@@ -1,23 +1,37 @@
 # Tiptoi DE → FR / CH / VO / BY / ND Übersetzer
 
-Übersetzt Tiptoi-Bücher (Ravensburger) automatisch von Deutsch in
-**5 Zielsprachen**: Französisch, Schweizerdeutsch, Vogtländisch, Bairisch
-und Plattdeutsch. Nimmt eine GME-Datei, tauscht alle Audiodateien aus
-und erzeugt eine neue abspielbare GME-Datei.
+Ein persönliches Bastelprojekt: Tiptoi-Bücher (Ravensburger) automatisch
+von Deutsch in eine andere Sprache übersetzen. Nimmt eine GME-Datei,
+tauscht die Audiodateien aus und erzeugt eine neue abspielbare GME-Datei.
+
+Unterstützte Zielsprachen: Französisch, Schweizerdeutsch, Vogtländisch,
+Bairisch, Plattdeutsch.
+
+> **Hinweis:** Das ist kein offizielles Tool und kein fertig poliertes Produkt.
+> Es funktioniert für meinen Anwendungsfall — aber es gibt sicher Bücher,
+> bei denen es hakt. Feedback und Verbesserungen sind willkommen.
+
+---
+
+## Abhängigkeit von tttool und tip-toi-reveng
+
+Dieses Projekt baut vollständig auf der Arbeit der
+[tip-toi-reveng](https://github.com/entropia/tip-toi-reveng)-Community auf.
+Ohne `tttool` (GME entpacken, YAML, assemble) und die dort dokumentierten
+Formatdetails wäre dieses Projekt nicht möglich.
 
 ---
 
 ## Warum Google Colab für die Transkription?
 
-Mein PC hat leider keine GPU, also
-kein CUDA. Whisper läuft damit ausschließlich auf der CPU.
+Mein PC hat keine GPU, also kein CUDA. Whisper läuft damit ausschließlich auf der CPU.
 
 Ein typisches Tiptoi-Buch hat **1.000–2.000 OGG-Dateien**. Mit dem
-`small`-Modell auf CPU dauert die Transkription **mehrere Stunden**; das
-genauere `large-v3-turbo`-Modell wäre lokal **praktisch unbenutzbar**.
+`small`-Modell auf CPU dauert die Transkription mehrere Stunden; das
+genauere `large-v3-turbo`-Modell wäre lokal praktisch unbenutzbar.
 
 **Lösung: Schritt 2 (Transkription) auf Google Colab auslagern.**
-Colab stellt kostenlos eine **NVIDIA T4-GPU** zur Verfügung – dort läuft
+Colab stellt kostenlos eine NVIDIA T4-GPU zur Verfügung – dort läuft
 `large-v3-turbo` ca. 1–2 Sekunden pro Datei statt Minuten. Die fertigen
 TXT-Transkripte werden zurück in `03_transcripts/` gelegt; alle anderen
 Schritte laufen weiterhin lokal.
@@ -91,7 +105,7 @@ nano .env   # MISTRAL_API_KEY=dein_key_hier
 # Plattdeutsch
 ./tiptoi.sh 01_input/buch.gme --language nd
 
-# Binary-Patch (erhält Spiele-Logik, ALPHA):
+# Binary-Patch (erhält Spiele-Logik, experimentell):
 ./tiptoi.sh 01_input/buch.gme --use-patcher
 
 # Nur ersten 10 Dateien (Testlauf)
@@ -120,7 +134,7 @@ python pipeline.py 01_input/buch.gme [OPTIONEN]
   --limit N               Nur die ersten N Audiodateien verarbeiten
                           (0 = alle, nützlich für Testläufe)
 
-  --use-patcher           [ALPHA] Schritt 6 via gme_patch.py statt tttool assemble
+  --use-patcher           [experimentell] Schritt 6 via gme_patch.py statt tttool assemble
                           (erhält Spiele-Logik per Binary-Patch)
 
   --skip-assemble         Schritt 6 überspringen (OGGs bleiben für manuellen Patch)
@@ -132,19 +146,13 @@ python pipeline.py 01_input/buch.gme [OPTIONEN]
 
 ---
 
-## Nach dem Lauf
+## Dialekte: ein Hinweis
 
-Resume: Einfach denselben Befehl nochmal ausführen – bereits vorhandene
-Transkripte, Übersetzungen und MP3s werden übersprungen.
-
----
-
-## Direkter Python-Aufruf
-
-```bash
-source .venv/bin/activate
-python pipeline.py 01_input/buch.gme --language fr
-```
+Vogtländisch, Bairisch und Plattdeutsch werden über Hochdeutsch- bzw.
+Österreichische/Schweizer TTS-Stimmen angenähert — echte Dialekt-TTS-Stimmen
+gibt es dafür (noch) nicht. Das Ergebnis klingt entsprechend nur annähernd
+dialektal. Die Übersetzungsqualität hängt außerdem davon ab, wie gut Mistral
+den jeweiligen Dialekt beherrscht.
 
 ---
 
@@ -152,10 +160,7 @@ python pipeline.py 01_input/buch.gme --language fr
 
 Jede Sprache hat 8 edge-tts-Stimmen (4m/4f). Sprecher werden automatisch
 via **resemblyzer** (GE2E Embeddings) erkannt und den Stimmen zugeordnet.
-Das Ergebnis wird als `speakers.json` pro Buch gespeichert und bei weiteren
-Sprachen wiederverwendet.
-
-Übersetzung erfolgt via **Magistral** (`magistral-medium-latest`, Reasoning-Modell).
+Das Ergebnis wird als `speakers.json` pro Buch gespeichert.
 
 **Französisch (`--language fr`)**
 
@@ -241,6 +246,22 @@ backup/         Versionierte Skript-Backups
 ## Stack
 
 - Python 3.13, faster-whisper, mistralai (Magistral), edge-tts, resemblyzer, python-dotenv
-- tttool 1.11 (Haskell-Binary)
-- gme_patch.py v6 (Binary-Patch, erhält Spiele-Logik)
+- tttool 1.11 (Haskell-Binary, von der tip-toi-reveng-Community)
+- gme_patch.py / gme_patch_same_lenght.py (Binary-Patch, experimentell)
 - ffmpeg 7.1
+
+---
+
+## Danke
+
+Dieses Projekt wäre ohne die Vorarbeit der
+[tip-toi-reveng](https://github.com/entropia/tip-toi-reveng)-Community
+nicht möglich — insbesondere die vollständige GME-Format-Dokumentation,
+`tttool` und `libtiptoi.c` (Michael Wolf). Vielen Dank für die jahrelange
+Reverse-Engineering-Arbeit.
+
+---
+
+## Lizenz
+
+MIT License — siehe [LICENSE](LICENSE)
