@@ -1,18 +1,24 @@
 # gme_patch_same_lenght
 
-Binary audio patcher for Tiptoi GME files — **shift=0 guaranteed**.
+A personal tool for replacing audio in Tiptoi GME files using a shift=0 approach.
 
-Every replacement audio is adjusted to exactly match the original entry's byte length.
-Since the audio section never changes in size, all post-audio pointers (game binaries,
-play scripts) remain valid without any pointer shifting.
+Every replacement audio is padded or trimmed to exactly match the original entry's
+byte length. Since the audio section doesn't change in size, post-audio pointers
+(game binaries, play scripts) should remain valid without any shifting.
 
-## Why shift=0 matters
+This is a workaround for a specific use case — not a general-purpose GME editor.
+If you're looking for the proper tooling, please use
+[tttool](https://github.com/entropia/tip-toi-reveng) by the tip-toi-reveng community.
+
+## Why shift=0
 
 Tiptoi GME files contain game binaries after the audio section. When the audio
-section changes size, every pointer to that post-audio region must be updated.
-This is complex and error-prone. By keeping every audio entry at its original size,
-the post-audio section stays at the same file offset — no pointer updates needed,
-games work correctly.
+section changes size, every pointer to that post-audio region needs to be updated.
+Rather than trying to track all those pointers, this tool avoids the problem
+entirely by keeping every audio entry at its original byte size.
+
+This works well for simple audio replacement (e.g. translated speech), but means
+some quality is sacrificed when the new audio is longer than the original.
 
 ## Usage
 
@@ -118,3 +124,11 @@ The pipeline passes `speakers_json`, `transcripts_dir`, and `max_diff=inf` autom
 - `edge-tts` (`pip install edge-tts`)
 - `mistralai` + `MISTRAL_API_KEY` in `.env` (for Option 3 only)
 - `python-dotenv` (for `.env` loading)
+
+## Acknowledgements
+
+This tool would not exist without the groundwork laid by the
+[tip-toi-reveng](https://github.com/entropia/tip-toi-reveng) project —
+in particular the GME format documentation (`GME-Format.md`) and
+`libtiptoi.c` by Michael Wolf, which served as the reference implementation.
+Thanks to everyone who has contributed to reverse-engineering the format.
