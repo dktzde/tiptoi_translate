@@ -148,11 +148,14 @@ python pipeline.py 01_input/buch.gme [OPTIONEN]
 
 ## Dialekte: ein Hinweis
 
-Vogtländisch, Bairisch und Plattdeutsch werden über Hochdeutsch- bzw.
-Österreichische/Schweizer TTS-Stimmen angenähert — echte Dialekt-TTS-Stimmen
-gibt es dafür (noch) nicht. Das Ergebnis klingt entsprechend nur annähernd
-dialektal. Die Übersetzungsqualität hängt außerdem davon ab, wie gut Mistral
-den jeweiligen Dialekt beherrscht.
+**Schweizerdeutsch** funktioniert erfahrungsgemäß gut — die CH-Stimmen von
+edge-tts klingen überzeugend und Mistral übersetzt solide ins Schweizerdeutsche.
+
+**Vogtländisch, Bairisch und Plattdeutsch** klingen leider weitgehend wie
+Hochdeutsch. Echte Dialekt-TTS-Stimmen gibt es dafür nicht; die verfügbaren
+Stimmen (DE/AT/CH) geben den Dialektcharakter kaum wieder. Auch die
+Übersetzungsqualität von Mistral ist für diese Dialekte eingeschränkt.
+Diese Sprachoptionen sind daher eher experimentell.
 
 ---
 
