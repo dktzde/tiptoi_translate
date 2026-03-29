@@ -413,7 +413,7 @@ if [ "$PRUEFE_STIFT" -eq 1 ]; then
             LANG_COUNT=0
             while IFS= read -r -d '' _F; do
                 _BASE=$(basename "$_F")
-                _LANG=$("$TTTOOL" info "$_F" 2>/dev/null | grep -i "^Language:" | awk '{print $2}' || true)
+                _LANG=$("$TTTOOL" info "$_F" 2>/dev/null | grep -i "^Language:" | awk '{print $2}' | tr -cd '[:alpha:]' || true)
                 LANG_COUNT=$((LANG_COUNT + 1))
                 if [ -z "$_LANG" ]; then
                     echo -n "  FEHLT: $_BASE → setze $PEN_LANG ... "
@@ -515,13 +515,13 @@ else
         echo "── $BASENAME"
 
         # ── Sprachcheck ──────────────────────────────────────────────────────
-        LANG_INFO=$("$TTTOOL" info "$FILE" 2>/dev/null | grep -i "^Language:" | awk '{print $2}' || true)
+        LANG_INFO=$("$TTTOOL" info "$FILE" 2>/dev/null | grep -i "^Language:" | awk '{print $2}' | tr -cd '[:alpha:]' || true)
         
         if [ "$FORCE_LANGUAGE" = "true" ]; then
             echo "   FORCE_LANGUAGE aktiv: GME muss Stift-Sprache haben ($PEN_LANG)"
             if [ -z "$LANG_INFO" ]; then
                 echo "   WARNUNG: GME hat keine Sprachinfo – versuche via tttool zu setzen ..."
-                if ! "$TTTOOL" set-language "$FILE" "$PEN_LANG" 2>/dev/null; then
+                if ! "$TTTOOL" set-language "$PEN_LANG" "$FILE" 2>/dev/null; then
                     echo "   FEHLER: Sprache konnte nicht gesetzt werden – Datei übersprungen."
                     WARNINGS+=("$BASENAME: Sprache fehlt und konnte nicht gesetzt werden")
                     continue
